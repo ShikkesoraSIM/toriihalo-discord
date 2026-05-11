@@ -20,6 +20,7 @@ EXTENSIONS = (
     "bot.cogs.admin",
     "bot.cogs.mod_alerts",
     "bot.cogs.upstream_watch",
+    "bot.cogs.roles",
 )
 
 
@@ -27,6 +28,7 @@ class ToriiBot(commands.Bot):
     def __init__(self, settings: Settings) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
+        intents.members = True
         super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.settings = settings
         self.db = BotDatabase(settings.bot_database_path)
