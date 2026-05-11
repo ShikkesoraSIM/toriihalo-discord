@@ -19,6 +19,7 @@ EXTENSIONS = (
     "bot.cogs.fun",
     "bot.cogs.admin",
     "bot.cogs.mod_alerts",
+    "bot.cogs.upstream_watch",
 )
 
 

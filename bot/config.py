@@ -41,6 +41,16 @@ class Settings(BaseSettings):
     mod_alert_poll_seconds: float = Field(default=5.0, validation_alias="MOD_ALERT_POLL_SECONDS")
     mod_alert_mention_here: bool = Field(default=True, validation_alias="MOD_ALERT_MENTION_HERE")
 
+    # Upstream-watch cog: polls ppy/osu master for breaking changes that
+    # block a Torii rebase. Currently tracks the realm `schema_version`
+    # constant (any bump means the on-disk DB is incompatible until we
+    # write a migration). Channel falls back to the mod-alert channel
+    # if a dedicated one isn't set — most servers want both alerts in
+    # the same place.
+    upstream_watch_channel_id: int | None = Field(default=None, validation_alias="UPSTREAM_WATCH_CHANNEL_ID")
+    upstream_watch_interval_seconds: float = Field(default=21600.0, validation_alias="UPSTREAM_WATCH_INTERVAL_SECONDS")
+    upstream_watch_mention_here: bool = Field(default=False, validation_alias="UPSTREAM_WATCH_MENTION_HERE")
+
     economy_daily_min: int = Field(default=120, validation_alias="ECONOMY_DAILY_MIN")
     economy_daily_max: int = Field(default=260, validation_alias="ECONOMY_DAILY_MAX")
     economy_work_min: int = Field(default=30, validation_alias="ECONOMY_WORK_MIN")

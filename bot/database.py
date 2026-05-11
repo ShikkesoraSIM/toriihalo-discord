@@ -81,6 +81,18 @@ class BotDatabase:
                 metadata TEXT NULL,
                 created_at TEXT NOT NULL
             );
+
+            -- Generic key-value store for cog-level state that doesn't
+            -- justify its own table (e.g. "last seen upstream realm
+            -- schema_version", periodic-task watermarks, one-off flags).
+            -- Values are stored as TEXT — callers serialise their own
+            -- types in / out. Keep keys namespaced (e.g. "upstream_watch.*"
+            -- or "feature_name.*") to avoid collisions between cogs.
+            CREATE TABLE IF NOT EXISTS bot_kv (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """
         )
         await self._conn.commit()
@@ -350,6 +362,33 @@ class BotDatabase:
             except Exception:
                 await self.conn.rollback()
                 raise
+
+    # ---------------------------------------------------------------
+    #  Generic key-value store (bot_kv)
+    # ---------------------------------------------------------------
+
+    async def kv_get(self, key: str) -> str | None:
+        """Read a value from the cog-shared KV table. Returns None if unset."""
+        cursor = await self.conn.execute("SELECT value FROM bot_kv WHERE key=?", (key,))
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return str(row["value"])
+
+    async def kv_set(self, key: str, value: str) -> None:
+        """Upsert a value into the cog-shared KV table."""
+        now = dt_to_iso(utc_now())
+        async with self._write_lock:
+            await self.conn.execute(
+                """
+                INSERT INTO bot_kv (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key)
+                DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                """,
+                (key, value, now),
+            )
+            await self.conn.commit()
 
     async def top_wallets(self, limit: int = 10) -> list[tuple[int, int, str | None]]:
         safe_limit = max(1, min(limit, 50))
