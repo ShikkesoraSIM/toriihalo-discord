@@ -1,0 +1,10 @@
+services:
+  torii-discord-bot:
+    build: .
+    container_name: torii_discord_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+
