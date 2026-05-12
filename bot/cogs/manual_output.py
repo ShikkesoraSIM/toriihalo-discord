@@ -32,8 +32,8 @@ DOCS_DATA = {
                 "~ [*Support Torii*](https://ko-fi.com/toriiserver) ~\n\n"
                 "*This is a heavy work in progress. Much more will be added later, and information "
                 "listed here or anywhere official for Torii is subject to change.*"
-                "*Torii or any of the offical Torii services are not associated, affiliated or endorsed "
-                "by peppy or the osu!team.*"
+                "***We are not affiliated with, endorsed by, or supported by ppy Pty Ltd, peppy, "
+                "or the osu! development team.***"
             ),
             "inline": False
         }
