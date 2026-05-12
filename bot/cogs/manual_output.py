@@ -4,7 +4,6 @@ from discord.ext import commands
 
 logger = logging.getLogger(__name__)
 
-# Data for the Roles Menu
 EMBED_DATA = {
     "title": "**__Roles__**",
     "description": "*Here, you can see what each role does, and apply some roles to yourself.*",
@@ -17,7 +16,6 @@ EMBED_DATA = {
     ]
 }
 
-# Data for the Documentation
 DOCS_DATA = {
     "title": "**__Official Documentation__**",
     "color": 16711935,
@@ -34,6 +32,8 @@ DOCS_DATA = {
                 "~ [*Support Torii*](https://ko-fi.com/toriiserver) ~\n\n"
                 "*This is a heavy work in progress. Much more will be added later, and information "
                 "listed here or anywhere official for Torii is subject to change.*"
+                "*Torii or any of the offical Torii services are not associated, affiliated or endorsed "
+                "by peppy or the osu!team.*"
             ),
             "inline": False
         }
@@ -84,7 +84,6 @@ class Roles(commands.Cog):
         embed.set_footer(text="Torii - Forged in Shikke's Dojo", icon_url="https://lazer.shikkesora.com/image/logos/logo@2x.png")
         await ctx.send(embed=embed, view=RoleView())
 
-    # ADDED THE SECOND COMMAND HERE
     @commands.command(name="postdocs")
     @commands.has_permissions(administrator=True)
     async def postdocs(self, ctx: commands.Context) -> None:
