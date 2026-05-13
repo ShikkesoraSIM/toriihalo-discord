@@ -29,10 +29,21 @@ class ToriiBot(commands.Bot):
         intents = discord.Intents.none()
         intents.guilds = True
         intents.members = True
-        # Required for prefix commands (e.g. @ToriiHalo postdocs) to
-        # see the message text after the mention. Without this the
-        # event arrives but message.content is empty in guilds and
-        # discord.py's command extension can't parse the command name.
+        # Required to actually RECEIVE MESSAGE_CREATE events in guild
+        # channels. intents.guilds covers guild lifecycle events
+        # (joins/channels/roles) but NOT messages; without
+        # guild_messages the bot's on_message never fires and prefix
+        # commands silently no-op no matter how the prefix is set up.
+        # Not a privileged intent — no portal config needed.
+        intents.guild_messages = True
+        # Privileged intent required for the bot to see the actual
+        # text inside the MESSAGE_CREATE events it now receives.
+        # Without this the event arrives but message.content is empty
+        # in guilds (except when the bot is mentioned, per Discord's
+        # mention-exception rule — but discord.py's command extension
+        # still won't parse cleanly without it). Must also be toggled
+        # ON in the Discord Developer Portal under "Privileged
+        # Gateway Intents".
         intents.message_content = True
         super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.settings = settings
