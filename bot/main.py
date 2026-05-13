@@ -86,6 +86,25 @@ class ToriiBot(commands.Bot):
         if self.user:
             logger.info("Bot ready as %s (%s)", self.user, self.user.id)
 
+    # DEBUG: temporary instrumentation to trace prefix command dispatch
+    # for the manual_output cog. Logs every incoming non-bot message
+    # with its content preview + whether the bot was mentioned, plus
+    # any prefix-command error. Once postdocs/postmenu are confirmed
+    # working in prod this whole block can be deleted.
+    async def on_message(self, message: discord.Message) -> None:
+        if not message.author.bot:
+            logger.info(
+                "incoming msg author=%s channel=%s mentioned=%s content=%r",
+                message.author,
+                getattr(message.channel, "name", message.channel.id),
+                self.user in message.mentions if self.user else False,
+                message.content[:200],
+            )
+        await self.process_commands(message)
+
+    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+        logger.exception("prefix command error in %s: %s", ctx.command, error)
+
     async def on_tree_error(self, interaction: discord.Interaction, error: Exception) -> None:
         logger.exception("App command error: %s", error)
         message = f"Command failed: {error}"
