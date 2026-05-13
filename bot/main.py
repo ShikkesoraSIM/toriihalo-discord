@@ -29,6 +29,11 @@ class ToriiBot(commands.Bot):
         intents = discord.Intents.none()
         intents.guilds = True
         intents.members = True
+        # Required for prefix commands (e.g. @ToriiHalo postdocs) to
+        # see the message text after the mention. Without this the
+        # event arrives but message.content is empty in guilds and
+        # discord.py's command extension can't parse the command name.
+        intents.message_content = True
         super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.settings = settings
         self.db = BotDatabase(settings.bot_database_path)
