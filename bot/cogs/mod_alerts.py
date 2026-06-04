@@ -1,9 +1,11 @@
 ﻿from __future__ import annotations
 
+import io
 import logging
 from typing import Any
 
 import discord
+import httpx
 from discord.ext import commands, tasks
 
 from bot.torii_api import ToriiApiError, ToriiApiUnauthorized
@@ -71,9 +73,18 @@ class ModAlertsCog(commands.Cog):
                 embed = self._build_embed(alert)
                 severity = str(alert.get("severity", "warning")).lower()
                 mention = "@here" if self.bot.settings.mod_alert_mention_here and severity == "critical" else None
+                # NSFW media uploads carry the offending image, reposted behind a
+                # spoiler so the channel can eyeball it without it showing inline.
+                spoiler_file = None
+                if str(alert.get("kind")) == "nsfw_media_upload":
+                    metadata = alert.get("metadata") or {}
+                    image_url = metadata.get("image_url") or metadata.get("url")
+                    if image_url:
+                        spoiler_file = await self._fetch_spoiler_image(str(image_url), metadata.get("media_type"))
                 await channel.send(
                     content=mention,
                     embed=embed,
+                    file=spoiler_file,
                     allowed_mentions=discord.AllowedMentions(everyone=True),
                 )
                 await self.bot.api.mark_mod_alert_dispatched(int(alert["id"]))
@@ -84,6 +95,35 @@ class ModAlertsCog(commands.Cog):
     @poll_mod_alerts.before_loop
     async def before_poll_mod_alerts(self) -> None:
         await self.bot.wait_until_ready()
+
+    async def _fetch_spoiler_image(self, url: str, media_type: str | None = None) -> discord.File | None:
+        """Download an uploaded image so it can be reposted as a spoiler attachment.
+
+        Discord only blurs file attachments flagged as spoilers (embeds cannot be
+        spoilered), so we pull the bytes ourselves and hand them back as a
+        spoiler-flagged discord.File. Returns None on any failure; the caller
+        still posts the text embed without the image.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                data = resp.content
+        except Exception as exc:
+            logger.warning("Failed to download NSFW media %s: %s", url, exc)
+            return None
+        if not data:
+            return None
+        ctype = resp.headers.get("content-type", "").lower()
+        ext = "png"
+        if "gif" in ctype:
+            ext = "gif"
+        elif "webp" in ctype:
+            ext = "webp"
+        elif "jpeg" in ctype or "jpg" in ctype:
+            ext = "jpg"
+        label = media_type if media_type in ("avatar", "cover") else "media"
+        return discord.File(io.BytesIO(data), filename=f"nsfw_{label}.{ext}", spoiler=True)
 
     def _build_embed(self, alert: dict[str, Any]) -> discord.Embed:
         severity = str(alert.get("severity", "warning")).lower()
