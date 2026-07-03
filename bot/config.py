@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     upstream_watch_interval_seconds: float = Field(default=21600.0, validation_alias="UPSTREAM_WATCH_INTERVAL_SECONDS")
     upstream_watch_mention_here: bool = Field(default=False, validation_alias="UPSTREAM_WATCH_MENTION_HERE")
 
+    # daily-challenge watcher: chequeo diario 00:05 UTC. si el buffer de DC
+    # agendados baja de min_buffer_days, pinguea el canal (cae al de mod-alerts
+    # si no se setea uno propio) con @here.
+    daily_challenge_watch_channel_id: int | None = Field(default=None, validation_alias="DAILY_CHALLENGE_WATCH_CHANNEL_ID")
+    daily_challenge_watch_min_buffer_days: int = Field(default=2, validation_alias="DAILY_CHALLENGE_WATCH_MIN_BUFFER_DAYS")
+    daily_challenge_watch_mention_here: bool = Field(default=True, validation_alias="DAILY_CHALLENGE_WATCH_MENTION_HERE")
+
     economy_daily_min: int = Field(default=120, validation_alias="ECONOMY_DAILY_MIN")
     economy_daily_max: int = Field(default=260, validation_alias="ECONOMY_DAILY_MAX")
     economy_work_min: int = Field(default=30, validation_alias="ECONOMY_WORK_MIN")

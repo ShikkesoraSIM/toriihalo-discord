@@ -269,6 +269,19 @@ class ToriiApiClient:
             skip_auth=True,
         )
 
+    async def get_daily_challenge_schedule(self) -> dict:
+        if not self._mod_alert_token:
+            raise ToriiApiUnauthorized("Missing MOD_ALERT_TOKEN.")
+        data = await self._request(
+            "GET",
+            "/api/private/daily-challenge/schedule",
+            headers={"X-Torii-Mod-Alert-Token": self._mod_alert_token},
+            skip_auth=True,
+        )
+        if isinstance(data, dict):
+            return data
+        raise ToriiApiError(f"Unexpected response for daily challenge schedule: {type(data)}")
+
     def score_url(self, score_id: int | str) -> str:
         return f"{self.web_base_url}/scores/{score_id}"
 
