@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     mod_alert_poll_seconds: float = Field(default=5.0, validation_alias="MOD_ALERT_POLL_SECONDS")
     mod_alert_mention_here: bool = Field(default=True, validation_alias="MOD_ALERT_MENTION_HERE")
 
+    # o!rdr render watch: postea los videos de replays renderizados (los que
+    # el user compartio desde el cliente) en un canal. Cae al canal de
+    # mod-alerts si no hay canal propio, como los otros watchers. Los threads
+    # por video mantienen la conversacion fuera del feed principal.
+    ordr_watch_channel_id: int | None = Field(default=None, validation_alias="ORDR_WATCH_CHANNEL_ID")
+    ordr_watch_poll_seconds: float = Field(default=30.0, validation_alias="ORDR_WATCH_POLL_SECONDS")
+    ordr_watch_create_threads: bool = Field(default=True, validation_alias="ORDR_WATCH_CREATE_THREADS")
+
     # Upstream-watch cog: polls ppy/osu master for breaking changes that
     # block a Torii rebase. Currently tracks the realm `schema_version`
     # constant (any bump means the on-disk DB is incompatible until we

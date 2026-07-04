@@ -21,6 +21,7 @@ EXTENSIONS = (
     "bot.cogs.mod_alerts",
     "bot.cogs.upstream_watch",
     "bot.cogs.daily_challenge_watch",
+    "bot.cogs.ordr_watch",
     "bot.cogs.manual_output",
 )
 

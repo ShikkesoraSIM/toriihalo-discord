@@ -269,6 +269,32 @@ class ToriiApiClient:
             skip_auth=True,
         )
 
+    async def get_pending_ordr_renders(self, *, limit: int = 5) -> list[dict]:
+        if not self._mod_alert_token:
+            raise ToriiApiUnauthorized("Missing MOD_ALERT_TOKEN.")
+        data = await self._request(
+            "GET",
+            "/api/private/ordr-renders/pending",
+            params={"limit": max(1, min(limit, 20))},
+            headers={"X-Torii-Mod-Alert-Token": self._mod_alert_token},
+            skip_auth=True,
+        )
+        if isinstance(data, dict):
+            renders = data.get("renders", [])
+            if isinstance(renders, list):
+                return renders
+        raise ToriiApiError(f"Unexpected response for ordr renders: {type(data)}")
+
+    async def mark_ordr_render_dispatched(self, record_id: int) -> None:
+        if not self._mod_alert_token:
+            raise ToriiApiUnauthorized("Missing MOD_ALERT_TOKEN.")
+        await self._request(
+            "POST",
+            f"/api/private/ordr-renders/{record_id}/dispatch",
+            headers={"X-Torii-Mod-Alert-Token": self._mod_alert_token},
+            skip_auth=True,
+        )
+
     async def get_daily_challenge_schedule(self) -> dict:
         if not self._mod_alert_token:
             raise ToriiApiUnauthorized("Missing MOD_ALERT_TOKEN.")
