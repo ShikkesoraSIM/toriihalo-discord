@@ -16,13 +16,14 @@ _TORII_WEB = "https://lazer.shikkesora.com"
 
 
 def _masked(text: str, url: str | None) -> str:
-    """Masked link de discord [text](url). Escapa []( ) del label para no romperlo.
-    (los mensajes de BOT si renderizan masked links en el content, a diferencia de
-    los mensajes de usuario)."""
+    """Masked link de discord [text](<url>). Escapa []( ) del label para no romperlo.
+    la url va entre <> para SUPRIMIR el embed del link (sino discord unfurlea la
+    pagina de torii arriba del player del video). los mensajes de BOT si renderizan
+    masked links en el content, a diferencia de los de usuario."""
     label = str(text).replace("[", "(").replace("]", ")")
     if not url:
         return label
-    return f"[{label}]({url})"
+    return f"[{label}](<{url}>)"
 
 
 # colores por estado del render
