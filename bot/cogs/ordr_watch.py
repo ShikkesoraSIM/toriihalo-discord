@@ -179,7 +179,18 @@ class OrdrWatchCog(commands.Cog):
         message = await channel.send(content, allowed_mentions=discord.AllowedMentions.none())
         logger.info("Posted final video for render %s", render.get("id"))
         if self.bot.settings.ordr_watch_create_threads:
+            # el thread se abre RECIEN a los ~8s: el embed del video llega async y
+            # cuando discord lo renderiza, el chip del thread desaparece visualmente
+            # (bug del cliente, se arregla al restartear). abriendolo despues de que
+            # el embed agarro, el chip queda. task aparte para no frenar el poll.
+            asyncio.create_task(self._delayed_thread(message, render))
+
+    async def _delayed_thread(self, message: discord.Message, render: dict) -> None:
+        try:
+            await asyncio.sleep(8)
             await self._try_thread(message, render)
+        except Exception as exc:
+            logger.warning("Delayed thread task failed for render %s: %s", render.get("id"), exc)
 
     def _final_header(self, render: dict) -> str:
         """'🎬 [submitter] rendered a replay played by [player] on [map]' con links."""
