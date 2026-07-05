@@ -178,19 +178,40 @@ class OrdrWatchCog(commands.Cog):
         content = f"{self._final_header(render)}\n{video_url}"
         message = await channel.send(content, allowed_mentions=discord.AllowedMentions.none())
         logger.info("Posted final video for render %s", render.get("id"))
-        if self.bot.settings.ordr_watch_create_threads:
-            # el thread se abre RECIEN a los ~8s: el embed del video llega async y
-            # cuando discord lo renderiza, el chip del thread desaparece visualmente
-            # (bug del cliente, se arregla al restartear). abriendolo despues de que
-            # el embed agarro, el chip queda. task aparte para no frenar el poll.
-            asyncio.create_task(self._delayed_thread(message, render))
+        # el resto (verificar embed + abrir thread) corre en una task aparte para no
+        # frenar el poll. el thread se abre recien a los ~8s: si se abre antes de que
+        # el embed renderice, el chip del thread desaparece visualmente (bug del
+        # cliente de discord).
+        asyncio.create_task(self._settle_final_message(channel, message, content, render))
 
-    async def _delayed_thread(self, message: discord.Message, render: dict) -> None:
+    async def _settle_final_message(
+        self,
+        channel: discord.TextChannel,
+        message: discord.Message,
+        content: str,
+        render: dict,
+    ) -> None:
         try:
             await asyncio.sleep(8)
-            await self._try_thread(message, render)
+
+            # a veces discord crawlea el link de o!rdr ANTES de que la pagina del
+            # video este lista -> cachea "sin embed" y el player no aparece nunca.
+            # si a los 8s no hay embed, borramos y reposteamos UNA vez (crawl fresco
+            # con la pagina ya lista).
+            try:
+                fresh = await channel.fetch_message(message.id)
+                if not fresh.embeds:
+                    logger.info("Render %s message has no embed; reposting once", render.get("id"))
+                    await message.delete()
+                    message = await channel.send(content, allowed_mentions=discord.AllowedMentions.none())
+                    await asyncio.sleep(8)
+            except discord.DiscordException as exc:
+                logger.warning("Embed check failed for render %s: %s", render.get("id"), exc)
+
+            if self.bot.settings.ordr_watch_create_threads:
+                await self._try_thread(message, render)
         except Exception as exc:
-            logger.warning("Delayed thread task failed for render %s: %s", render.get("id"), exc)
+            logger.warning("Settle task failed for render %s: %s", render.get("id"), exc)
 
     def _final_header(self, render: dict) -> str:
         """'🎬 [submitter] rendered a replay played by [player] on [map]' con links."""
