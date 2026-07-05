@@ -285,6 +285,33 @@ class ToriiApiClient:
                 return renders
         raise ToriiApiError(f"Unexpected response for ordr renders: {type(data)}")
 
+    async def get_active_ordr_renders(self, *, limit: int = 10) -> list[dict]:
+        if not self._mod_alert_token:
+            raise ToriiApiUnauthorized("Missing MOD_ALERT_TOKEN.")
+        data = await self._request(
+            "GET",
+            "/api/private/ordr-renders/active",
+            params={"limit": max(1, min(limit, 25))},
+            headers={"X-Torii-Mod-Alert-Token": self._mod_alert_token},
+            skip_auth=True,
+        )
+        if isinstance(data, dict):
+            renders = data.get("renders", [])
+            if isinstance(renders, list):
+                return renders
+        raise ToriiApiError(f"Unexpected response for active ordr renders: {type(data)}")
+
+    async def set_ordr_render_message(self, record_id: int, message_id: int) -> None:
+        if not self._mod_alert_token:
+            raise ToriiApiUnauthorized("Missing MOD_ALERT_TOKEN.")
+        await self._request(
+            "POST",
+            f"/api/private/ordr-renders/{record_id}/message",
+            params={"message_id": message_id},
+            headers={"X-Torii-Mod-Alert-Token": self._mod_alert_token},
+            skip_auth=True,
+        )
+
     async def mark_ordr_render_dispatched(self, record_id: int) -> None:
         if not self._mod_alert_token:
             raise ToriiApiUnauthorized("Missing MOD_ALERT_TOKEN.")
