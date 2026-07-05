@@ -57,9 +57,9 @@ class OrdrWatchCog(commands.Cog):
         logger.warning("Configured ordr watch channel %s is not a text channel.", channel_id)
         return None
 
-    @tasks.loop(seconds=8.0)
+    @tasks.loop(seconds=4.0)
     async def poll_renders(self) -> None:
-        poll_seconds = max(5.0, float(self.bot.settings.ordr_watch_poll_seconds))
+        poll_seconds = max(3.0, float(self.bot.settings.ordr_watch_poll_seconds))
         if abs(self.poll_renders.seconds - poll_seconds) > 0.001:
             self.poll_renders.change_interval(seconds=poll_seconds)
 
@@ -119,6 +119,7 @@ class OrdrWatchCog(commands.Cog):
 
         if not message_id:
             message = await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+            logger.info("Posted live-status message for render %s (status=%s)", record_id, status)
             try:
                 await self.bot.api.set_ordr_render_message(record_id, message.id)
             except Exception as exc:
@@ -141,28 +142,41 @@ class OrdrWatchCog(commands.Cog):
         self._last_drawn[record_id] = signature
 
     async def _post_final(self, channel: discord.TextChannel, render: dict, old_message_id) -> None:
-        """Mensaje final: borra el de progreso y postea SOLO el link (player embebido) + thread."""
+        """Cierra el mensaje de progreso ('done, video abajo') y postea uno NUEVO con
+        solo el link (player embebido) + abre el thread ahi. si no hubo mensaje de
+        progreso (render rapido), va directo al mensaje del video."""
         username = str(render.get("username") or "someone")
         title = str(render.get("beatmap_title") or "").strip()
         video_url = str(render.get("video_url") or "").strip()
         if not video_url:
             return
 
-        # borrar el mensaje de progreso (su embed bloquea el auto-embed del link).
+        # 1. cerrar el mensaje de progreso: editarlo a "listo, video abajo" (queda de
+        # historial). NO lo borramos; el player va en un mensaje aparte porque un
+        # embed propio del bot bloquea el auto-embed del link.
         if old_message_id:
+            done_embed = discord.Embed(color=_COLOR_DONE)
+            done_embed.set_author(name=f"{username} rendered a replay")
+            if title:
+                done_embed.description = f"**{title}**"
+            done_embed.add_field(name="Status", value="Done \N{PARTY POPPER} — video below \N{DOWNWARDS BLACK ARROW}", inline=False)
             try:
-                await channel.get_partial_message(int(old_message_id)).delete()
+                await channel.get_partial_message(int(old_message_id)).edit(
+                    embed=done_embed, allowed_mentions=discord.AllowedMentions.none()
+                )
             except discord.DiscordException:
                 pass
 
+        # 2. mensaje NUEVO con solo el link -> discord despliega el player de o!rdr.
         header = f"\N{CLAPPER BOARD} **{username}** rendered a replay"
         if title:
             header += f" of **{title}**"
-        # SIN embed: discord despliega el player de o!rdr desde el link del content.
         message = await channel.send(
             f"{header}\n{video_url}",
             allowed_mentions=discord.AllowedMentions.none(),
         )
+        logger.info("Posted final video for render %s", render.get("id"))
+        # 3. thread para hablar del replay, en el mensaje del video.
         if self.bot.settings.ordr_watch_create_threads:
             await self._try_thread(message, render)
 
@@ -218,6 +232,7 @@ class OrdrWatchCog(commands.Cog):
             if title:
                 name = f"\N{SPEECH BALLOON} {username} - {title}"[:100]
             await message.create_thread(name=name, auto_archive_duration=1440)
+            logger.info("Opened thread for render %s", render.get("id"))
         except discord.DiscordException as exc:
             logger.warning("Could not create thread for render %s: %s", render.get("id"), exc)
 

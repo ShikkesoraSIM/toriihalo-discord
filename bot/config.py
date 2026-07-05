@@ -46,7 +46,9 @@ class Settings(BaseSettings):
     # mod-alerts si no hay canal propio, como los otros watchers. Los threads
     # por video mantienen la conversacion fuera del feed principal.
     ordr_watch_channel_id: int | None = Field(default=None, validation_alias="ORDR_WATCH_CHANNEL_ID")
-    ordr_watch_poll_seconds: float = Field(default=30.0, validation_alias="ORDR_WATCH_POLL_SECONDS")
+    # 4s: los renders de o!rdr son rapidos (<30s); hay que polear seguido para
+    # agarrarlos EN CURSO y mostrar el progreso en vivo, no solo el final.
+    ordr_watch_poll_seconds: float = Field(default=4.0, validation_alias="ORDR_WATCH_POLL_SECONDS")
     ordr_watch_create_threads: bool = Field(default=True, validation_alias="ORDR_WATCH_CREATE_THREADS")
 
     # Upstream-watch cog: polls ppy/osu master for breaking changes that
