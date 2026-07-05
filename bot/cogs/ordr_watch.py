@@ -32,6 +32,10 @@ class OrdrWatchCog(commands.Cog):
         # record_id -> ultimo (status, progress, renderer) que dibujamos, para no
         # spamear ediciones cuando o!rdr no cambio nada.
         self._last_drawn: dict[int, tuple] = {}
+        # record_ids que ya finalizamos esta sesion: guard extra contra doble-post
+        # del mensaje final si el dispatch al server tarda/falla y el render sigue
+        # apareciendo en /active un ciclo mas.
+        self._finalized: set[int] = set()
         self.poll_renders.start()
 
     def cog_unload(self) -> None:
@@ -87,79 +91,112 @@ class OrdrWatchCog(commands.Cog):
         progress = str(render.get("progress") or "")
         renderer = render.get("renderer")
         message_id = render.get("discord_message_id")
-        terminal = status in ("done", "failed")
+        video_url = render.get("video_url")
 
-        # sin cambios y no es terminal -> nada que hacer (evita editar de mas).
-        signature = (status, progress, renderer)
-        if message_id and not terminal and self._last_drawn.get(record_id) == signature:
+        # ya lo cerramos esta sesion: no re-postear el final aunque siga en /active.
+        if record_id in self._finalized:
             return
 
-        content, embed = self._render_message(render)
+        # TERMINAL: video listo. borramos el mensaje de progreso (con su embed) y
+        # posteamos uno NUEVO con SOLO el link, asi discord despliega el player de
+        # o!rdr (con un embed propio del bot, discord NO auto-embebe el link).
+        if status == "done" and video_url:
+            await self._post_final(channel, render, message_id)
+            await self._finalize(record_id)
+            return
+
+        if status == "failed":
+            await self._post_failed(channel, render, message_id)
+            await self._finalize(record_id)
+            return
+
+        # EN CURSO (queued/rendering): postear/editar el embed de status en vivo.
+        signature = (status, progress, renderer)
+        if message_id and self._last_drawn.get(record_id) == signature:
+            return
+
+        embed = self._progress_embed(render)
 
         if not message_id:
-            # primer avistaje: postear el mensaje y guardar su id en el server.
-            message = await channel.send(content=content, embed=embed, allowed_mentions=discord.AllowedMentions.none())
+            message = await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
             try:
                 await self.bot.api.set_ordr_render_message(record_id, message.id)
             except Exception as exc:
                 logger.warning("Could not store discord message id for render %s: %s", record_id, exc)
-            if self.bot.settings.ordr_watch_create_threads:
-                await self._try_thread(message, render)
-            self._last_drawn[record_id] = signature
-            if terminal:
-                await self._finalize(record_id)
-            return
-
-        # ya existe el mensaje: editarlo con el estado nuevo.
-        try:
-            partial = channel.get_partial_message(int(message_id))
-            await partial.edit(content=content, embed=embed, allowed_mentions=discord.AllowedMentions.none())
-        except discord.NotFound:
-            # borraron el mensaje: reposteamos y re-guardamos el id.
-            message = await channel.send(content=content, embed=embed, allowed_mentions=discord.AllowedMentions.none())
+        else:
             try:
-                await self.bot.api.set_ordr_render_message(record_id, message.id)
-            except Exception:
-                pass
-        except discord.DiscordException as exc:
-            logger.warning("Could not edit render message %s: %s", record_id, exc)
-            return
+                await channel.get_partial_message(int(message_id)).edit(
+                    embed=embed, allowed_mentions=discord.AllowedMentions.none()
+                )
+            except discord.NotFound:
+                message = await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+                try:
+                    await self.bot.api.set_ordr_render_message(record_id, message.id)
+                except Exception:
+                    pass
+            except discord.DiscordException as exc:
+                logger.warning("Could not edit render message %s: %s", record_id, exc)
+                return
 
         self._last_drawn[record_id] = signature
-        if terminal:
-            await self._finalize(record_id)
+
+    async def _post_final(self, channel: discord.TextChannel, render: dict, old_message_id) -> None:
+        """Mensaje final: borra el de progreso y postea SOLO el link (player embebido) + thread."""
+        username = str(render.get("username") or "someone")
+        title = str(render.get("beatmap_title") or "").strip()
+        video_url = str(render.get("video_url") or "").strip()
+        if not video_url:
+            return
+
+        # borrar el mensaje de progreso (su embed bloquea el auto-embed del link).
+        if old_message_id:
+            try:
+                await channel.get_partial_message(int(old_message_id)).delete()
+            except discord.DiscordException:
+                pass
+
+        header = f"\N{CLAPPER BOARD} **{username}** rendered a replay"
+        if title:
+            header += f" of **{title}**"
+        # SIN embed: discord despliega el player de o!rdr desde el link del content.
+        message = await channel.send(
+            f"{header}\n{video_url}",
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+        if self.bot.settings.ordr_watch_create_threads:
+            await self._try_thread(message, render)
+
+    async def _post_failed(self, channel: discord.TextChannel, render: dict, message_id) -> None:
+        username = str(render.get("username") or "someone")
+        embed = discord.Embed(color=_COLOR_FAILED)
+        embed.set_author(name=f"{username}'s render failed")
+        embed.description = str(render.get("error_message") or "o!rdr couldn't render this replay.")
+        if message_id:
+            try:
+                await channel.get_partial_message(int(message_id)).edit(
+                    embed=embed, allowed_mentions=discord.AllowedMentions.none()
+                )
+                return
+            except discord.DiscordException:
+                pass
+        await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
 
     async def _finalize(self, record_id: int) -> None:
         """Marca dispatched (deja de aparecer en /active) + limpia el cache."""
+        self._finalized.add(record_id)
         try:
             await self.bot.api.mark_ordr_render_dispatched(record_id)
         except Exception as exc:
             logger.warning("Could not mark render %s dispatched: %s", record_id, exc)
         self._last_drawn.pop(record_id, None)
 
-    def _render_message(self, render: dict) -> tuple[str | None, discord.Embed]:
+    def _progress_embed(self, render: dict) -> discord.Embed:
         username = str(render.get("username") or "someone")
         title = str(render.get("beatmap_title") or "").strip()
         status = str(render.get("status") or "queued")
         progress = str(render.get("progress") or "").strip()
         renderer = render.get("renderer")
-        video_url = render.get("video_url")
 
-        if status == "done" and video_url:
-            embed = discord.Embed(color=_COLOR_DONE)
-            embed.set_author(name=f"{username} rendered a replay")
-            if title:
-                embed.description = f"**{title}**"
-            # el link como content hace que discord embeba el player de o!rdr.
-            return video_url, embed
-
-        if status == "failed":
-            embed = discord.Embed(color=_COLOR_FAILED)
-            embed.set_author(name=f"{username}'s render failed")
-            embed.description = str(render.get("error_message") or "o!rdr couldn't render this replay.")
-            return None, embed
-
-        # en cola / rendereando
         rendering = status == "rendering"
         embed = discord.Embed(color=_COLOR_RENDERING if rendering else _COLOR_QUEUED)
         verb = "is rendering a replay" if rendering else "queued a replay"
@@ -171,7 +208,7 @@ class OrdrWatchCog(commands.Cog):
         if renderer and rendering:
             status_line = f"{status_line} · on {renderer}"
         embed.add_field(name="Status", value=status_line, inline=False)
-        return None, embed
+        return embed
 
     async def _try_thread(self, message: discord.Message, render: dict) -> None:
         try:
