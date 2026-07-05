@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import discord
@@ -9,6 +10,20 @@ from bot.torii_api import ToriiApiError, ToriiApiUnauthorized
 
 
 logger = logging.getLogger(__name__)
+
+# base del sitio Torii para armar los links (perfil / mapa).
+_TORII_WEB = "https://lazer.shikkesora.com"
+
+
+def _masked(text: str, url: str | None) -> str:
+    """Masked link de discord [text](url). Escapa []( ) del label para no romperlo.
+    (los mensajes de BOT si renderizan masked links en el content, a diferencia de
+    los mensajes de usuario)."""
+    label = str(text).replace("[", "(").replace("]", ")")
+    if not url:
+        return label
+    return f"[{label}]({url})"
+
 
 # colores por estado del render
 _COLOR_QUEUED = discord.Color.from_rgb(255, 211, 110)   # ambar
@@ -145,8 +160,6 @@ class OrdrWatchCog(commands.Cog):
         """Al terminar: borra el mensaje de progreso y postea uno NUEVO con solo el
         link (player embebido) + abre el thread ahi. si no hubo mensaje de progreso
         (render muy rapido), va directo al mensaje del video."""
-        username = str(render.get("username") or "someone")
-        title = str(render.get("beatmap_title") or "").strip()
         video_url = str(render.get("video_url") or "").strip()
         if not video_url:
             return
@@ -159,16 +172,41 @@ class OrdrWatchCog(commands.Cog):
             except discord.DiscordException:
                 pass
 
-        header = f"\N{CLAPPER BOARD} **{username}** rendered a replay"
-        if title:
-            header += f" of **{title}**"
-        message = await channel.send(
-            f"{header}\n{video_url}",
-            allowed_mentions=discord.AllowedMentions.none(),
-        )
+        # titulo con links: quien lo pidio, de QUIEN es la replay, y el mapa (todos
+        # clickeables). el link del video va aparte (bare) para que embeba el player.
+        content = f"{self._final_header(render)}\n{video_url}"
+        message = await channel.send(content, allowed_mentions=discord.AllowedMentions.none())
         logger.info("Posted final video for render %s", render.get("id"))
         if self.bot.settings.ordr_watch_create_threads:
             await self._try_thread(message, render)
+
+    def _final_header(self, render: dict) -> str:
+        """'🎬 [submitter] rendered a replay played by [player] on [map]' con links."""
+        submitter = str(render.get("username") or "someone")
+        submitter_id = render.get("user_id")
+        player = render.get("player_username")
+        player_id = render.get("player_user_id")
+        title = str(render.get("beatmap_title") or "").strip()
+        setid = render.get("beatmapset_id")
+        mapid = render.get("beatmap_online_id")
+        mode = str(render.get("gamemode") or "osu")
+
+        sub = _masked(submitter, f"{_TORII_WEB}/users/{submitter_id}" if submitter_id else None)
+
+        if title and setid and mapid:
+            map_part = _masked(title, f"{_TORII_WEB}/beatmapsets/{setid}#{mode}/{mapid}")
+        elif title:
+            map_part = _masked(title, None)
+        else:
+            map_part = "a replay"
+
+        same = player and player_id and submitter_id and str(player_id) == str(submitter_id)
+        if same:
+            return f"\N{CLAPPER BOARD} {sub} rendered their replay on {map_part}"
+        if player:
+            plink = _masked(player, f"{_TORII_WEB}/users/{player_id}" if player_id else None)
+            return f"\N{CLAPPER BOARD} {sub} rendered a replay played by {plink} on {map_part}"
+        return f"\N{CLAPPER BOARD} {sub} rendered a replay on {map_part}"
 
     async def _post_failed(self, channel: discord.TextChannel, render: dict, message_id) -> None:
         username = str(render.get("username") or "someone")
@@ -215,16 +253,25 @@ class OrdrWatchCog(commands.Cog):
         return embed
 
     async def _try_thread(self, message: discord.Message, render: dict) -> None:
-        try:
-            username = str(render.get("username") or "render")
-            title = str(render.get("beatmap_title") or "").strip()
-            name = f"\N{SPEECH BALLOON} {username}"
-            if title:
-                name = f"\N{SPEECH BALLOON} {username} - {title}"[:100]
-            await message.create_thread(name=name, auto_archive_duration=1440)
-            logger.info("Opened thread for render %s", render.get("id"))
-        except discord.DiscordException as exc:
-            logger.warning("Could not create thread for render %s: %s", render.get("id"), exc)
+        # el thread para hablar del replay. abre en el mensaje del video. reintenta
+        # una vez si el primer intento falla (rate limit / hiccup momentaneo de la API).
+        player = str(render.get("player_username") or render.get("username") or "replay")
+        title = str(render.get("beatmap_title") or "").strip()
+        name = f"\N{SPEECH BALLOON} {player}"
+        if title:
+            name = f"\N{SPEECH BALLOON} {player} - {title}"[:100]
+
+        for attempt in (1, 2):
+            try:
+                await message.create_thread(name=name, auto_archive_duration=1440)
+                logger.info("Opened thread for render %s", render.get("id"))
+                return
+            except discord.DiscordException as exc:
+                if attempt == 1:
+                    logger.warning("Thread create failed for render %s (retrying): %s", render.get("id"), exc)
+                    await asyncio.sleep(2)
+                    continue
+                logger.warning("Could not create thread for render %s: %s", render.get("id"), exc)
 
     @poll_renders.before_loop
     async def before_poll_renders(self) -> None:

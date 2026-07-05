@@ -119,7 +119,7 @@ class ToriiApiClient:
                 raise ToriiApiUnauthorized("No API token available.")
             return {"Authorization": f"Bearer {self._oauth_access_token}"}
 
-    async def _request(self, method: str, path: str, *, skip_auth: bool = False, **kwargs) -> dict | list:
+    async def _request(self, method: str, path: str, *, skip_auth: bool = False, _retried: bool = False, **kwargs) -> dict | list:
         headers = kwargs.pop("headers", {})
         if skip_auth:
             auth_headers = {}
@@ -143,7 +143,16 @@ class ToriiApiClient:
             raise ToriiApiError(f"Request failed: {exc}") from exc
 
         if response.status_code in {401, 403}:
-            raise ToriiApiUnauthorized("Torii API authorization failed. Check TORII_API_TOKEN.")
+            # self-heal: con OAuth, si el token quedo invalido ANTES de expirar
+            # (server reiniciado, token revocado, etc.), lo tiramos y reintentamos UNA
+            # vez con uno fresco. asi el bot nunca se queda "sin token" hasta reinicio.
+            if not skip_auth and not _retried and self._oauth_client_id and not self._static_token:
+                async with self._oauth_lock:
+                    self._oauth_access_token = None
+                    self._oauth_expires_at = 0.0
+                logger.info("Torii API 401/403 with OAuth; refreshing token and retrying once.")
+                return await self._request(method, path, skip_auth=skip_auth, _retried=True, headers=headers, **kwargs)
+            raise ToriiApiUnauthorized("Torii API authorization failed. Check OAuth client / TORII_API_TOKEN.")
         if response.status_code >= 400:
             detail: str
             try:
