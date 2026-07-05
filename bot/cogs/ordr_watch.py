@@ -264,8 +264,15 @@ class OrdrWatchCog(commands.Cog):
 
         for attempt in (1, 2):
             try:
-                await message.create_thread(name=name, auto_archive_duration=1440)
-                logger.info("Opened thread for render %s", render.get("id"))
+                thread = await message.create_thread(name=name, auto_archive_duration=1440)
+                logger.info("Opened thread for render %s (id=%s)", render.get("id"), thread.id)
+                # mensajito inicial: un thread vacio casi no se ve en el cliente de
+                # discord (el chip aparece recien con mensajes adentro). con esto el
+                # "1 Message" queda siempre visible abajo del video.
+                try:
+                    await thread.send(f"talk about {player}'s play here!")
+                except discord.DiscordException as exc:
+                    logger.warning("Could not send thread starter for render %s: %s", render.get("id"), exc)
                 return
             except discord.DiscordException as exc:
                 if attempt == 1:
