@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
 import discord
 from discord.ext import commands
@@ -46,6 +47,7 @@ class CannedCog(commands.Cog):
 
     def __init__(self, bot) -> None:
         self.bot = bot
+        self._ping_cooldown: dict[int, float] = {}  # {author_id: last_warn_ts}
 
     # ---- helpers -----------------------------------------------------
 
@@ -73,6 +75,39 @@ class CannedCog(commands.Cog):
 
     async def _save_custom(self, custom: dict[str, str]) -> None:
         await self.bot.db.kv_set(KV_KEY, json.dumps(custom))
+
+    # ---- guard: avisa si un no-staff pinguea a staff protegido -------
+
+    @commands.Cog.listener("on_message")
+    async def _staff_ping_guard(self, message: discord.Message) -> None:
+        if message.author.bot or message.guild is None:
+            return
+        watched = set(getattr(self.bot.settings, "staff_ping_guard_user_ids", None) or [])
+        if not watched:
+            return
+        content = message.content or ""
+        # solo @pings DIRECTOS en el texto (no replies, no role-pings)
+        if not any(f"<@{uid}>" in content or f"<@!{uid}>" in content for uid in watched):
+            return
+        # no avisar si el que pinguea es uno de los protegidos, o es staff
+        if message.author.id in watched or self._is_staff(message.author):
+            return
+        # cooldown por usuario para no spamear
+        now = time.time()
+        if now - self._ping_cooldown.get(message.author.id, 0.0) < 300:
+            return
+        self._ping_cooldown[message.author.id] = now
+        responses = await self._all()
+        text = responses.get("ping") or "please don't ping staff members."
+        try:
+            await message.reply(
+                text,
+                allowed_mentions=discord.AllowedMentions(
+                    replied_user=True, everyone=False, users=False, roles=False
+                ),
+            )
+        except discord.DiscordException as exc:
+            logger.warning("canned: staff ping guard reply failed: %s", exc)
 
     # ---- t!send <key> ------------------------------------------------
 

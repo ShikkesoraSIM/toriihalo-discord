@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     discord_token: SecretStr = Field(validation_alias="DISCORD_TOKEN")
     discord_guild_id: int | None = Field(default=None, validation_alias="DISCORD_GUILD_ID")
     discord_owner_ids: list[int] = Field(default_factory=list, validation_alias="DISCORD_OWNER_IDS")
+    # staff a "proteger": si un no-staff los @pinguea directo, el bot avisa (usa el canned `ping`).
+    staff_ping_guard_user_ids: list[int] = Field(
+        default_factory=lambda: [142395586350415873, 882747349615652924],
+        validation_alias="STAFF_PING_GUARD_USER_IDS",
+    )
 
     torii_api_base_url: str = Field(
         default="https://lazer-api.shikkesora.com",
