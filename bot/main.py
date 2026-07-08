@@ -22,6 +22,7 @@ EXTENSIONS = (
     "bot.cogs.upstream_watch",
     "bot.cogs.daily_challenge_watch",
     "bot.cogs.ordr_watch",
+    "bot.cogs.canned",
     "bot.cogs.manual_output",
 )
 
@@ -47,7 +48,7 @@ class ToriiBot(commands.Bot):
         # ON in the Discord Developer Portal under "Privileged
         # Gateway Intents".
         intents.message_content = True
-        super().__init__(command_prefix=commands.when_mentioned, intents=intents)
+        super().__init__(command_prefix=commands.when_mentioned_or("t!"), intents=intents)
         self.settings = settings
         self.db = BotDatabase(settings.bot_database_path)
         self.api = ToriiApiClient(
