@@ -149,8 +149,8 @@ class CannedCog(commands.Cog):
         if not self._is_staff(ctx.author):
             return
         await ctx.reply(
-            "uso: `t!canned list` · `t!canned set <key> <texto>` · "
-            "`t!canned del <key>` · `t!canned show <key>` · y `t!send <key>` para postear.",
+            "usage: `t!canned list` · `t!canned set <key> <text>` · "
+            "`t!canned del <key>` · `t!canned show <key>` · and `t!send <key>` to post.",
             mention_author=False,
         )
 
@@ -180,12 +180,12 @@ class CannedCog(commands.Cog):
             return
         k = key.lower().strip()
         if not k:
-            await ctx.reply("necesito un key.", mention_author=False)
+            await ctx.reply("i need a key.", mention_author=False)
             return
         custom = await self._load_custom()
         custom[k] = text.strip()
         await self._save_custom(custom)
-        await ctx.reply(f"ok, `{k}` guardado. probalo con `t!send {k}`.", mention_author=False)
+        await ctx.reply(f"saved `{k}`. try it with `t!send {k}`.", mention_author=False)
 
     @canned.command(name="del")
     async def canned_del(self, ctx: commands.Context, key: str) -> None:
@@ -196,11 +196,11 @@ class CannedCog(commands.Cog):
         if k in custom:
             del custom[k]
             await self._save_custom(custom)
-            note = " (vuelve al default)" if k in DEFAULTS else ""
-            await ctx.reply(f"borrado `{k}`.{note}", mention_author=False)
+            note = " (falls back to the default)" if k in DEFAULTS else ""
+            await ctx.reply(f"deleted `{k}`.{note}", mention_author=False)
         else:
             await ctx.reply(
-                f"`{k}` no es custom. un default no se borra, pero lo podés sobreescribir con `t!canned set {k} ...`.",
+                f"`{k}` isn't a custom response. defaults can't be deleted, but you can override it with `t!canned set {k} ...`.",
                 mention_author=False,
             )
 
@@ -213,7 +213,7 @@ class CannedCog(commands.Cog):
         if k in responses:
             await ctx.reply(f"`{k}`:\n>>> {responses[k]}", mention_author=False)
         else:
-            await ctx.reply(f"`{k}` no existe. `t!canned list` para ver los keys.", mention_author=False)
+            await ctx.reply(f"`{k}` doesn't exist. use `t!canned list` to see the keys.", mention_author=False)
 
 
 async def setup(bot) -> None:

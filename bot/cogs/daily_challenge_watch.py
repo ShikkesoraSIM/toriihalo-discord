@@ -126,23 +126,23 @@ class DailyChallengeWatchCog(commands.Cog):
     def _build_embed(self, schedule: dict, threshold: int) -> discord.Embed:
         buffer_days = int(schedule.get("buffer_days", 0))
         today = schedule.get("today", "?")
-        furthest = schedule.get("furthest_date") or "ninguno"
+        furthest = schedule.get("furthest_date") or "none"
         upcoming = schedule.get("scheduled_dates") or []
         has_today = bool(schedule.get("has_today", False))
 
         if not has_today:
-            title = "⚠️ No hay daily challenge para HOY"
+            title = "⚠️ No daily challenge for TODAY"
         elif buffer_days <= 0:
-            title = "⚠️ No hay daily challenge agendado para mañana"
+            title = "⚠️ No daily challenge scheduled for tomorrow"
         else:
-            title = f"⚠️ Quedan solo {buffer_days} día(s) de daily challenge agendados"
+            title = f"⚠️ Only {buffer_days} day(s) of daily challenge scheduled ahead"
 
         lines = [
-            f"Hoy (`{today}`): {'agendado' if has_today else 'SIN daily challenge'}",
-            f"Días agendados por delante (desde mañana): **{buffer_days}**",
-            f"Última fecha agendada: `{furthest}`",
+            f"Today (`{today}`): {'scheduled' if has_today else 'NO daily challenge'}",
+            f"Days scheduled ahead (from tomorrow): **{buffer_days}**",
+            f"Furthest scheduled date: `{furthest}`",
             "",
-            f"Hace falta agendar más daily challenges: el buffer bajó de {threshold} días.",
+            f"Please schedule more daily challenges. The buffer is below {threshold} days.",
         ]
         embed = discord.Embed(
             title=title,
@@ -151,11 +151,11 @@ class DailyChallengeWatchCog(commands.Cog):
         )
         if upcoming:
             embed.add_field(
-                name="Próximos agendados",
+                name="Upcoming",
                 value="\n".join(f"`{d}`" for d in upcoming[:10]),
                 inline=False,
             )
-        embed.set_footer(text="daily-challenge-watch · chequeo diario 00:05 UTC")
+        embed.set_footer(text="daily-challenge-watch · daily check at 00:05 UTC")
         return embed
 
     # ---- trigger manual (owner) para testear sin esperar a las 00:05 --
@@ -166,14 +166,14 @@ class DailyChallengeWatchCog(commands.Cog):
         try:
             schedule = await self.bot.api.get_daily_challenge_schedule()
         except Exception as exc:
-            await ctx.reply(f"error leyendo la agenda: {exc}", mention_author=False)
+            await ctx.reply(f"error reading the schedule: {exc}", mention_author=False)
             return
         threshold = max(0, int(self.bot.settings.daily_challenge_watch_min_buffer_days))
         embed = self._build_embed(schedule, threshold)
         # preview en el canal actual, SIN @here, para no pinguear a nadie al testear.
         await ctx.send(embed=embed)
         await ctx.reply(
-            f"buffer={schedule.get('buffer_days')} umbral={threshold} "
+            f"buffer={schedule.get('buffer_days')} threshold={threshold} "
             f"furthest={schedule.get('furthest_date')} has_today={schedule.get('has_today')}",
             mention_author=False,
         )
