@@ -1,8 +1,15 @@
+import asyncio
 import logging
+from datetime import datetime, timezone
+
 import discord
 from discord.ext import commands
 
 logger = logging.getLogger(__name__)
+
+FOOTER_TEXT = "Torii - Forged in Shikke's Dojo"
+FOOTER_ICON_URL = "https://lazer.shikkesora.com/image/logos/logo@2x.png"
+SEND_DELAY = 0.75
 
 DOCS_DATA = {
     "title": "**__Official Documentation__**",
@@ -762,50 +769,50 @@ FAQ_DATA = {
 
 
 class Docs(commands.Cog):
+    SECTIONS = [
+        ("docs",      "Official Documentation", DOCS_DATA, False),
+        ("rules",     "Server Rules",           RULES_DATA, True),
+        ("features",  "Features",               FEATURES_INTRO_DATA, True),
+        ("gameplay",  "Gameplay",               GAMEPLAY_DATA, False),
+        ("performance","Performance",           PERFORMANCE_DATA, False),
+        ("qol",       "Client & Quality of Life", CLIENT_QOL_DATA, False),
+        ("social",    "Social & Profile",       SOCIAL_PROFILE_DATA, False),
+        ("customization","Customization & Skinning", CUSTOMIZATION_DATA, False),
+        ("cosmetics", "Cosmetics & Currency",   COSMETICS_DATA, False),
+        ("scoring",   "Scoring & pp",           SCORING_INTRO_DATA, True),
+        ("mechanics", "pp System Gates",        PP_MECHANICS_DATA, False),
+        ("regulations","Mod Regulations & Reworks", MOD_REGULATIONS_DATA, False),
+        ("modifiers", "Play Modifiers & Penalties", PLAY_MODIFIERS_DATA, False),
+        ("status",    "Beatmap Status & Medals", MAP_STATUS_MEDALS_DATA, False),
+        ("logic",     "System Logic & Leaderboards", SYSTEM_LOGIC_DATA, False),
+        ("economy",   "Points & Economy",       ECONOMY_DATA, True),
+        ("store",     "Rewards & Cosmetic Store", COSMETIC_STORE_DATA, False),
+        ("halo",      "ToriiHalo",              TORIIHALO_DATA, True),
+        ("appeals",   "Restrictions & Appeals", RESTRICTIONS_APPEALS_DATA, True),
+        ("faq",       "FAQ",                    FAQ_DATA, True),
+    ]
+
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        self.first_docs_msg = None
-        self.sent_messages = {}
+        self.first_docs_msg: discord.Message | None = None
+        self.sent_messages: dict[str, discord.Message] = {}
 
-    @commands.command(name="postdocs")
-    @commands.has_permissions(administrator=True)
-    async def postdocs(self, ctx: commands.Context) -> None:
-        self.first_docs_msg = None
-        self.sent_messages.clear()
+    @staticmethod
+    def _set_footer(embed: discord.Embed) -> None:
+        embed.set_footer(text=FOOTER_TEXT, icon_url=FOOTER_ICON_URL)
 
-        embed_datasets = [
-            ("docs", DOCS_DATA),
-            ("rules", RULES_DATA),
-            ("features", FEATURES_INTRO_DATA),
-            ("gameplay", GAMEPLAY_DATA),
-            ("performance", PERFORMANCE_DATA),
-            ("qol", CLIENT_QOL_DATA),
-            ("social", SOCIAL_PROFILE_DATA),
-            ("customization", CUSTOMIZATION_DATA),
-            ("cosmetics", COSMETICS_DATA),
-            ("scoring", SCORING_INTRO_DATA),
-            ("mechanics", PP_MECHANICS_DATA),
-            ("regulations", MOD_REGULATIONS_DATA),
-            ("modifiers", PLAY_MODIFIERS_DATA),
-            ("status", MAP_STATUS_MEDALS_DATA),
-            ("logic", SYSTEM_LOGIC_DATA),
-            ("economy", ECONOMY_DATA),
-            ("store", COSMETIC_STORE_DATA),
-            ("halo", TORIIHALO_DATA),
-            ("appeals", RESTRICTIONS_APPEALS_DATA),
-            ("faq", FAQ_DATA)
-        ]
-
-        for key, data_dict in embed_datasets:
+    async def _post_embeds(self, ctx: commands.Context) -> None:
+        for key, _label, data_dict, _nav in self.SECTIONS:
             fields = data_dict.get("fields", [])
             field_chunks = [fields[i:i + 6] for i in range(0, len(fields), 6)]
 
             if not field_chunks:
                 embed = discord.Embed.from_dict(data_dict)
-                embed.set_footer(text="Torii - Forged in Shikke's Dojo", icon_url="https://lazer.shikkesora.com/image/logos/logo@2x.png")
+                self._set_footer(embed)
                 msg = await ctx.send(embed=embed)
+                await asyncio.sleep(SEND_DELAY)
 
-                if key == "docs" and not self.first_docs_msg:
+                if key == "docs" and self.first_docs_msg is None:
                     self.first_docs_msg = msg
                 elif key not in self.sent_messages:
                     self.sent_messages[key] = msg
@@ -814,47 +821,47 @@ class Docs(commands.Cog):
             for idx, chunk in enumerate(field_chunks):
                 chunk_data = data_dict.copy()
                 chunk_data["fields"] = chunk
-
                 if len(field_chunks) > 1:
                     chunk_data["title"] = f"{data_dict.get('title', '')} (Part {idx + 1})"
 
                 embed = discord.Embed.from_dict(chunk_data)
-                embed.set_footer(
-                    text="Torii - Forged in Shikke's Dojo",
-                    icon_url="https://lazer.shikkesora.com/image/logos/logo@2x.png"
-                )
+                self._set_footer(embed)
                 msg = await ctx.send(embed=embed)
+                await asyncio.sleep(SEND_DELAY)
 
                 if idx == 0:
-                    if key == "docs" and not self.first_docs_msg:
+                    if key == "docs" and self.first_docs_msg is None:
                         self.first_docs_msg = msg
                     elif key not in self.sent_messages:
                         self.sent_messages[key] = msg
 
+    @commands.command(name="postdocs")
+    @commands.has_permissions(administrator=True)
+    @commands.guild_only()
+    async def postdocs(self, ctx: commands.Context) -> None:
+        logger.info(f"postdocs triggered by {ctx.author} in #{ctx.channel} (guild: {ctx.guild.id})")
+
+        self.first_docs_msg = None
+        self.sent_messages.clear()
+        await self._post_embeds(ctx)
+
         try:
             await ctx.message.delete()
-        except discord.Forbidden:
-            logger.warning("Bot lacks 'Manage Messages' permission to delete the trigger command.")
-        except discord.HTTPException as e:
-            logger.error(f"Failed to delete message: {e}")
+        except (discord.Forbidden, discord.HTTPException) as e:
+            logger.warning(f"Could not delete trigger message: {e}")
 
     @commands.command(name="updatedocs")
     @commands.has_permissions(administrator=True)
+    @commands.guild_only()
     async def updatedocs(self, ctx: commands.Context) -> None:
+        logger.info(f"updatedocs triggered by {ctx.author} in #{ctx.channel} (guild: {ctx.guild.id})")
+
         if not self.first_docs_msg or not self.sent_messages:
             await ctx.send("❌ No document posts detected in memory! Please run `t!postdocs` first.", delete_after=10)
             return
 
+        docs_channel_id = self.first_docs_msg.channel.id
         server_id = ctx.guild.id
-        channel_id = ctx.channel.id
-
-        m_rules = self.sent_messages.get("rules").id
-        m_features = self.sent_messages.get("features").id
-        m_scoring = self.sent_messages.get("scoring").id
-        m_economy = self.sent_messages.get("economy").id
-        m_halo = self.sent_messages.get("halo").id
-        m_appeals = self.sent_messages.get("appeals").id
-        m_faq = self.sent_messages.get("faq").id
 
         quick_access = (
             "~ [*Official Website Homepage*](https://lazer.shikkesora.com/) ~\n"
@@ -867,44 +874,49 @@ class Docs(commands.Cog):
             "~ [*Support Torii*](https://ko-fi.com/toriiserver) ~"
         )
 
-        doc_sections = (
-            f"• [*Server Rules*](https://discord.com/channels/{server_id}/{channel_id}/{m_rules})\n"
-            f"• [*Features*](https://discord.com/channels/{server_id}/{channel_id}/{m_features})\n"
-            f"• [*Scoring & pp*](https://discord.com/channels/{server_id}/{channel_id}/{m_scoring})\n"
-            f"• [*Points & Economy*](https://discord.com/channels/{server_id}/{channel_id}/{m_economy})\n"
-            f"• [*ToriiHalo*](https://discord.com/channels/{server_id}/{channel_id}/{m_halo})\n"
-            f"• [*Restrictions & Appeals*](https://discord.com/channels/{server_id}/{channel_id}/{m_appeals})\n"
-            f"• [*FAQ*](https://discord.com/channels/{server_id}/{channel_id}/{m_faq})\n\n"
+        nav_lines = []
+        for key, label, _data, include_in_nav in self.SECTIONS:
+            if not include_in_nav:
+                continue
+            msg = self.sent_messages.get(key)
+            if msg:
+                nav_lines.append(f"• [*{label}*](https://discord.com/channels/{server_id}/{docs_channel_id}/{msg.id})")
+            else:
+                nav_lines.append(f"• *{label}* (section not posted)")
+
+        nav_lines.append("")
+        nav_lines.append(
             "***We are not affiliated with, endorsed by, or supported by ppy Pty Ltd, peppy, "
             "or the osu! development team.***"
         )
 
         updated_docs = DOCS_DATA.copy()
         updated_docs["fields"] = [
-            {
-                "name": "*Quick Access Links:*",
-                "value": quick_access,
-                "inline": False
-            },
-            {
-                "name": "*Navigation:*",
-                "value": doc_sections,
-                "inline": False
-            }
+            {"name": "*Quick Access Links:*", "value": quick_access, "inline": False},
+            {"name": "*Navigation:*", "value": "\n".join(nav_lines), "inline": False}
         ]
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        if "description" not in updated_docs:
+            updated_docs["description"] = ""
+        updated_docs["description"] += f"\n\n*Last updated: {now}*"
 
         embed = discord.Embed.from_dict(updated_docs)
-        embed.set_footer(text="Torii - Forged in Shikke's Dojo", icon_url="https://lazer.shikkesora.com/image/logos/logo@2x.png")
-        await self.first_docs_msg.edit(embed=embed)
+        self._set_footer(embed)
+
+        try:
+            await self.first_docs_msg.edit(embed=embed)
+        except (discord.NotFound, discord.HTTPException) as e:
+            logger.error(f"Failed to edit documentation embed: {e}")
+            await ctx.send("❌ Could not update the documentation embed. It may have been deleted.", delete_after=10)
+            return
 
         await ctx.send("✅ Navigation links generated and updated successfully!", delete_after=5)
 
         try:
             await ctx.message.delete()
-        except discord.Forbidden:
-            logger.warning("Bot lacks 'Manage Messages' permission to delete the trigger command.")
-        except discord.HTTPException as e:
-            logger.error(f"Failed to delete message: {e}")
+        except (discord.Forbidden, discord.HTTPException) as e:
+            logger.warning(f"Could not delete trigger message: {e}")
+
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(Docs(bot))
