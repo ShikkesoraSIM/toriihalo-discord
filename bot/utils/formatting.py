@@ -48,6 +48,9 @@ def format_accuracy(value: float | int | None) -> str:
     return f"{accuracy_to_percent(value):.2f}%"
 
 
+RATE_MODS = {"DT", "NC", "HT", "DC"}
+
+
 def format_mods(mods: Any) -> str:
     if not mods:
         return "NM"
@@ -58,7 +61,21 @@ def format_mods(mods: Any) -> str:
         for mod in mods:
             if isinstance(mod, dict):
                 acronym = mod.get("acronym")
-                if acronym:
+                if not acronym:
+                    continue
+                if acronym in RATE_MODS:
+                    settings = mod.get("settings") or {}
+                    speed = settings.get("speed_change")
+                    if speed is not None:
+                        s = float(speed)
+                        if s == int(s):
+                            result.append(f"{acronym} {int(s)}x")
+                        else:
+                            fmt = f"{s:.2f}".rstrip("0").rstrip(".")
+                            result.append(f"{acronym} {fmt}x")
+                    else:
+                        result.append(acronym)
+                else:
                     result.append(str(acronym))
             elif isinstance(mod, str):
                 result.append(mod)
@@ -70,4 +87,3 @@ def truncate(text: str, max_len: int = 1024) -> str:
     if len(text) <= max_len:
         return text
     return text[: max_len - 1] + "…"
-
