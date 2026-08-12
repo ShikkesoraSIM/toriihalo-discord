@@ -19,6 +19,46 @@ SEVERITY_COLOURS = {
     "critical": discord.Color.red(),
 }
 
+HIGH_PP_KIND = "high_pp_play"
+BUTTON_PREFIX = "torii:highpp"
+
+
+def build_high_pp_view(alert_id: int) -> discord.ui.View:
+    """Los clicks se manejan en on_interaction, asi que los botones sobreviven un restart."""
+    view = discord.ui.View(timeout=None)
+    view.add_item(
+        discord.ui.Button(
+            label="Legit player",
+            emoji="\N{WHITE HEAVY CHECK MARK}",
+            style=discord.ButtonStyle.success,
+            custom_id=f"{BUTTON_PREFIX}:whitelist:{alert_id}",
+        )
+    )
+    view.add_item(
+        discord.ui.Button(
+            label="Ban beatmapset",
+            emoji="\N{NO ENTRY}",
+            style=discord.ButtonStyle.danger,
+            custom_id=f"{BUTTON_PREFIX}:ban:{alert_id}",
+        )
+    )
+    view.add_item(
+        discord.ui.Button(
+            label="All plays",
+            emoji="\N{CLIPBOARD}",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"{BUTTON_PREFIX}:plays:{alert_id}",
+        )
+    )
+    view.add_item(
+        discord.ui.Button(
+            label="Dismiss",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"{BUTTON_PREFIX}:dismiss:{alert_id}",
+        )
+    )
+    return view
+
 
 class ModAlertsCog(commands.Cog):
     def __init__(self, bot) -> None:
@@ -72,11 +112,17 @@ class ModAlertsCog(commands.Cog):
             try:
                 embed = self._build_embed(alert)
                 severity = str(alert.get("severity", "warning")).lower()
-                mention = "@here" if self.bot.settings.mod_alert_mention_here and severity == "critical" else None
+                kind = str(alert.get("kind"))
+                mention = (
+                    "@here"
+                    if self.bot.settings.mod_alert_mention_here and (severity == "critical" or kind == HIGH_PP_KIND)
+                    else None
+                )
+                view = build_high_pp_view(int(alert["id"])) if kind == HIGH_PP_KIND else None
                 # NSFW media uploads carry the offending image, reposted behind a
                 # spoiler so the channel can eyeball it without it showing inline.
                 spoiler_file = None
-                if str(alert.get("kind")) == "nsfw_media_upload":
+                if kind == "nsfw_media_upload":
                     metadata = alert.get("metadata") or {}
                     image_url = metadata.get("image_url") or metadata.get("url")
                     if image_url:
@@ -85,6 +131,7 @@ class ModAlertsCog(commands.Cog):
                     content=mention,
                     embed=embed,
                     file=spoiler_file,
+                    view=view,
                     allowed_mentions=discord.AllowedMentions(everyone=True),
                 )
                 await self.bot.api.mark_mod_alert_dispatched(int(alert["id"]))
@@ -95,6 +142,99 @@ class ModAlertsCog(commands.Cog):
     @poll_mod_alerts.before_loop
     async def before_poll_mod_alerts(self) -> None:
         await self.bot.wait_until_ready()
+
+    def _can_action(self, user: discord.abc.User) -> bool:
+        if user.id in set(self.bot.settings.discord_owner_ids):
+            return True
+        return isinstance(user, discord.Member) and user.guild_permissions.administrator
+
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction) -> None:
+        custom_id = (interaction.data or {}).get("custom_id", "") if interaction.data else ""
+        if not str(custom_id).startswith(f"{BUTTON_PREFIX}:"):
+            return
+
+        _, _, action, raw_id = str(custom_id).split(":", 3)
+        alert_id = int(raw_id)
+
+        if not self._can_action(interaction.user):
+            await interaction.response.send_message("Administrators only.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            await self._run_action(interaction, action, alert_id)
+        except Exception as exc:
+            logger.exception("Mod alert action %s on %s failed: %s", action, alert_id, exc)
+            await interaction.followup.send(f"That failed: `{exc}`", ephemeral=True)
+
+    async def _run_action(self, interaction: discord.Interaction, action: str, alert_id: int) -> None:
+        if action == "plays":
+            user_id = self._alert_user_id(interaction)
+            if user_id is None:
+                await interaction.followup.send("Could not tell which player this alert is about.", ephemeral=True)
+                return
+            data = await self.bot.api.get_user_high_pp_plays(user_id, limit=25)
+            plays = data.get("plays") or []
+            if not plays:
+                await interaction.followup.send("No plays above the threshold.", ephemeral=True)
+                return
+            lines = [
+                f"`{play['pp']:>7.1f}pp` [{play['beatmap_name']}]({self.bot.api.score_url(play['score_id'])}) "
+                f"- {play['accuracy']}% +{play['mods'] or 'NM'}"
+                for play in plays
+            ]
+            embed = discord.Embed(
+                title=f"{data.get('username') or user_id} - plays above {data.get('threshold')}pp",
+                description="\n".join(lines)[:4000],
+                color=discord.Color.orange(),
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+
+        if action == "whitelist":
+            await self.bot.api.whitelist_high_pp_user(alert_id, interaction.user.id)
+            resolution = f"Marked legit by {interaction.user.mention}, no more alerts for this player."
+        elif action == "ban":
+            result = await self.bot.api.ban_alert_beatmapset(
+                alert_id, reason=f"banned by {interaction.user} from a high pp alert"
+            )
+            banned = result.get("banned", 0)
+            resolution = (
+                f"Beatmapset `{result.get('beatmapset_id')}` banned by {interaction.user.mention} "
+                f"({banned} difficulties). Everyone with scores on it is being recalculated."
+            )
+        elif action == "dismiss":
+            await self.bot.api.resolve_mod_alert(alert_id)
+            resolution = f"Dismissed by {interaction.user.mention}."
+        else:
+            return
+
+        await self._close_alert_message(interaction, resolution)
+        await interaction.followup.send(resolution, ephemeral=True)
+
+    def _alert_user_id(self, interaction: discord.Interaction) -> int | None:
+        message = interaction.message
+        if message is None or not message.embeds:
+            return None
+        for field in message.embeds[0].fields:
+            if field.name == "User" and field.value and "#" in field.value:
+                digits = field.value.split("#", 1)[1].split("]", 1)[0].strip()
+                if digits.isdigit():
+                    return int(digits)
+        return None
+
+    async def _close_alert_message(self, interaction: discord.Interaction, resolution: str) -> None:
+        message = interaction.message
+        if message is None:
+            return
+        embed = message.embeds[0] if message.embeds else discord.Embed()
+        embed.add_field(name="Resolved", value=resolution, inline=False)
+        embed.color = discord.Color.dark_grey()
+        try:
+            await message.edit(embed=embed, view=None)
+        except discord.DiscordException as exc:
+            logger.warning("Could not close alert message %s: %s", message.id, exc)
 
     async def _fetch_spoiler_image(self, url: str, media_type: str | None = None) -> discord.File | None:
         """Download an uploaded image so it can be reposted as a spoiler attachment.

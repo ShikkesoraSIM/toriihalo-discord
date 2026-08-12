@@ -278,6 +278,54 @@ class ToriiApiClient:
             skip_auth=True,
         )
 
+    async def whitelist_high_pp_user(self, alert_id: int, moderator_id: int) -> dict:
+        if not self._mod_alert_token:
+            raise ToriiApiUnauthorized("Missing MOD_ALERT_TOKEN.")
+        data = await self._request(
+            "POST",
+            f"/api/private/mod-alerts/{alert_id}/whitelist-user",
+            params={"moderator_id": moderator_id},
+            headers={"X-Torii-Mod-Alert-Token": self._mod_alert_token},
+            skip_auth=True,
+        )
+        return data if isinstance(data, dict) else {}
+
+    async def ban_alert_beatmapset(self, alert_id: int, reason: str | None = None) -> dict:
+        if not self._mod_alert_token:
+            raise ToriiApiUnauthorized("Missing MOD_ALERT_TOKEN.")
+        data = await self._request(
+            "POST",
+            f"/api/private/mod-alerts/{alert_id}/ban-beatmapset",
+            params={"reason": reason} if reason else None,
+            headers={"X-Torii-Mod-Alert-Token": self._mod_alert_token},
+            skip_auth=True,
+        )
+        return data if isinstance(data, dict) else {}
+
+    async def resolve_mod_alert(self, alert_id: int) -> None:
+        if not self._mod_alert_token:
+            raise ToriiApiUnauthorized("Missing MOD_ALERT_TOKEN.")
+        await self._request(
+            "POST",
+            f"/api/private/mod-alerts/{alert_id}/resolve",
+            headers={"X-Torii-Mod-Alert-Token": self._mod_alert_token},
+            skip_auth=True,
+        )
+
+    async def get_user_high_pp_plays(self, user_id: int, *, limit: int = 25) -> dict:
+        if not self._mod_alert_token:
+            raise ToriiApiUnauthorized("Missing MOD_ALERT_TOKEN.")
+        data = await self._request(
+            "GET",
+            f"/api/private/mod-alerts/user/{user_id}/high-pp",
+            params={"limit": max(1, min(limit, 100))},
+            headers={"X-Torii-Mod-Alert-Token": self._mod_alert_token},
+            skip_auth=True,
+        )
+        if isinstance(data, dict):
+            return data
+        raise ToriiApiError(f"Unexpected response for user high pp plays: {type(data)}")
+
     async def get_pending_ordr_renders(self, *, limit: int = 5) -> list[dict]:
         if not self._mod_alert_token:
             raise ToriiApiUnauthorized("Missing MOD_ALERT_TOKEN.")
