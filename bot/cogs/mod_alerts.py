@@ -113,9 +113,10 @@ class ModAlertsCog(commands.Cog):
                 embed = self._build_embed(alert)
                 severity = str(alert.get("severity", "warning")).lower()
                 kind = str(alert.get("kind"))
+                live_high_pp = kind == HIGH_PP_KIND and not (alert.get("metadata") or {}).get("backfill")
                 mention = (
                     "@here"
-                    if self.bot.settings.mod_alert_mention_here and (severity == "critical" or kind == HIGH_PP_KIND)
+                    if self.bot.settings.mod_alert_mention_here and (severity == "critical" or live_high_pp)
                     else None
                 )
                 view = build_high_pp_view(int(alert["id"])) if kind == HIGH_PP_KIND else None
