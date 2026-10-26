@@ -94,3 +94,26 @@ docker compose -f docker-compose.example.yml up --build -d
 - Nunca commitear `.env`.
 - Usar token bot con privilegios mínimos.
 - Usar un token API de Torii dedicado para este bot.
+
+## Pings al owner
+
+La regla nativa de AutoMod bloquea la mencion directa antes de publicarla y
+aplica 30 minutos. Halo escucha solo la accion de timeout de esa regla: el
+segundo aviso pasa a 24 horas y el tercero a ban, sin borrar mensajes anteriores.
+Admin, Support y bots quedan exentos. No cambia el guard de los otros staff.
+
+El contador se reinicia tras 30 dias sin nuevos pings. Se guardan los ultimos
+50 registros por persona, incluidos errores y resets, en `bot_kv`; un restart
+no los borra. La configuracion vive en `owner_ping:config` y arranca desactivada
+si no esta preparada. No se importan avisos viejos del guard general.
+
+En el canal privado configurado para los logs:
+- `t!pingwarnings @usuario`: consultar contador y los ultimos diez registros.
+- `t!pingwarningsclear @usuario`: resetear contador (solo admin/owner), sin
+  borrar historial ni levantar un timeout o ban existente.
+
+El usuario recibe el aviso por DM; si tiene los DMs cerrados queda registrado.
+AutoMod deja su alerta en staff aunque Halo este caido, pero la escalada y los
+contadores requieren que el bot este conectado. El filtro apunta al token de
+mencion directa: no cubre la mencion implicita de una respuesta ni los DMs.
+Un token literal dentro de codigo/citas tambien puede activar la regla.

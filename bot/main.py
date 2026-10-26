@@ -23,6 +23,7 @@ EXTENSIONS = (
     "bot.cogs.daily_challenge_watch",
     "bot.cogs.ordr_watch",
     "bot.cogs.canned",
+    "bot.cogs.owner_ping",
     "bot.cogs.manual_output",
 )
 
@@ -39,6 +40,7 @@ class ToriiBot(commands.Bot):
         # commands silently no-op no matter how the prefix is set up.
         # Not a privileged intent — no portal config needed.
         intents.guild_messages = True
+        intents.auto_moderation_execution = True
         # Privileged intent required for the bot to see the actual
         # text inside the MESSAGE_CREATE events it now receives.
         # Without this the event arrives but message.content is empty
