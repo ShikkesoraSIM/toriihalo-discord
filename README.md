@@ -117,3 +117,8 @@ AutoMod deja su alerta en staff aunque Halo este caido, pero la escalada y los
 contadores requieren que el bot este conectado. El filtro apunta al token de
 mencion directa: no cubre la mencion implicita de una respuesta ni los DMs.
 Un token literal dentro de codigo/citas tambien puede activar la regla.
+
+El owner recibe otro DM silencioso con el autor, canal, texto bloqueado y la
+sancion realmente aplicada. No genera menciones ni push; si el texto es largo
+va completo en un adjunto. El envio fallido queda registrado sin cambiar la
+sancion ni el contador. El texto no se copia a la base del bot.

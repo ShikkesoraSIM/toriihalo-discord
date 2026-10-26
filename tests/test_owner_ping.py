@@ -33,15 +33,21 @@ def fixture(db=None):
     channel = SimpleNamespace(send=AsyncMock())
     guild = SimpleNamespace(id=100, owner_id=1, ban=AsyncMock())
     member = SimpleNamespace(
-        id=42, bot=False, guild=guild, roles=[], send=AsyncMock(), timeout=AsyncMock(),
+        id=42, display_name="kit", bot=False, guild=guild, roles=[], send=AsyncMock(), timeout=AsyncMock(),
         guild_permissions=SimpleNamespace(administrator=False, manage_guild=False, manage_messages=False),
     )
     guild.fetch_member = AsyncMock(return_value=member)
-    bot = SimpleNamespace(db=db or MemoryDB(), get_channel=lambda _: channel, fetch_channel=AsyncMock(return_value=channel))
+    guild.get_channel_or_thread = lambda _: SimpleNamespace(name="general")
+    owner = SimpleNamespace(id=1, send=AsyncMock())
+    bot = SimpleNamespace(
+        db=db or MemoryDB(), get_channel=lambda _: channel, fetch_channel=AsyncMock(return_value=channel),
+        get_user=lambda _: owner, fetch_user=AsyncMock(return_value=owner), owner=owner,
+    )
     cog = OwnerPingGuardCog(bot)
     event = SimpleNamespace(
         action=SimpleNamespace(type=discord.AutoModRuleActionType.timeout, duration=datetime.timedelta(minutes=30)),
         guild_id=100, rule_id=200, guild=guild, member=member, user_id=42, channel_id=500, message_id=None,
+        content="hey <@1> question about coinflip",
     )
     return cog, event, channel
 
@@ -296,3 +302,92 @@ def test_reset_requires_administration_not_only_support_role():
     ctx = SimpleNamespace(guild=event.guild, author=event.member, channel=SimpleNamespace(id=300), reply=AsyncMock())
     asyncio.run(cog.clear_warnings.callback(cog, ctx, event.member))
     ctx.reply.assert_not_awaited()
+
+
+def test_owner_dm_contains_message_author_channel_and_actual_action():
+    cog, event, channel = fixture()
+    asyncio.run(cog.on_automod_action(event))
+    call = cog.bot.owner.send.await_args
+    assert call.kwargs["silent"] is True
+    assert call.kwargs["allowed_mentions"].users is False
+    assert call.kwargs["allowed_mentions"].everyone is False
+    embed = call.kwargs["embed"]
+    assert "question about coinflip" in embed.description
+    assert "kit (42)" == embed.fields[0].value
+    assert "#general" in embed.fields[1].value
+    assert "https://discord.com/channels/100/500" in embed.fields[1].value
+    assert "Timeout de 30 minutos" == embed.fields[2].value
+    assert embed.footer.text == "Aviso 1 de 3"
+
+
+@pytest.mark.parametrize("previous, expected", [(1, "Timeout de 24 horas"), (2, "Ban del Discord")])
+def test_owner_is_told_actual_escalated_action(previous, expected):
+    cog, event, channel = fixture()
+
+    async def run():
+        await cog._save(100, 42, {"count": previous, "last_at": time.time() - 90000, "history": []})
+        await cog.on_automod_action(event)
+        assert cog.bot.owner.send.await_args.kwargs["embed"].fields[2].value == expected
+
+    asyncio.run(run())
+
+
+def test_failed_escalation_not_reported_to_owner_as_success():
+    cog, event, channel = fixture()
+    event.member.timeout.side_effect = forbidden()
+
+    async def run():
+        await cog._save(100, 42, {"count": 1, "last_at": time.time() - 90000, "history": []})
+        await cog.on_automod_action(event)
+        assert "fallo la escalada" in cog.bot.owner.send.await_args.kwargs["embed"].fields[2].value
+
+    asyncio.run(run())
+
+
+def test_owner_dm_failure_does_not_undo_moderation_or_staff_log():
+    cog, event, channel = fixture()
+    cog.bot.owner.send.side_effect = forbidden()
+
+    async def run():
+        await cog.on_automod_action(event)
+        state = await cog._state(100, 42)
+        assert state["history"][0]["owner_dm"] == "unavailable"
+        assert state["history"][0]["status"] == "30 minute timeout (AutoMod)"
+        channel.send.assert_awaited_once()
+
+    asyncio.run(run())
+
+
+def test_long_text_is_attached_without_loss():
+    cog, event, channel = fixture()
+    event.content = "*<@1> message*\n" * 400
+    captured = []
+
+    async def receive(**kwargs):
+        assert len(kwargs["embed"].description) < 4096
+        captured.append(kwargs["file"].fp.read().decode("utf-8"))
+
+    cog.bot.owner.send.side_effect = receive
+    asyncio.run(cog.on_automod_action(event))
+    assert captured == [event.content]
+
+
+def test_duplicate_event_does_not_send_duplicate_owner_dm():
+    cog, event, channel = fixture()
+
+    async def run():
+        await cog.on_automod_action(event)
+        await cog.on_automod_action(event)
+
+    asyncio.run(run())
+    cog.bot.owner.send.assert_awaited_once()
+
+
+def test_missing_cached_owner_and_missing_content_are_handled():
+    cog, event, channel = fixture()
+    cog.bot.get_user = lambda _: None
+    event.content = ""
+    event.guild.get_channel_or_thread = lambda _: None
+    asyncio.run(cog.on_automod_action(event))
+    cog.bot.fetch_user.assert_awaited_once_with(1)
+    assert "Discord no incluyo" in cog.bot.owner.send.await_args.kwargs["embed"].description

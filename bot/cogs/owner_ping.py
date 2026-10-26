@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import io
 import json
 import logging
 import time
@@ -128,7 +129,49 @@ class OwnerPingGuardCog(commands.Cog):
             incident["status"] = f"escalation failed ({type(error).__name__}); native 30 minute timeout"
             logger.error("owner ping escalation failed: guild=%s user=%s warning=%s", event.guild_id, event.user_id, count)
         await self._save(event.guild_id, event.user_id, state)
+        incident["owner_dm"] = await self._notify_owner(config, event, member, incident)
+        await self._save(event.guild_id, event.user_id, state)
         await self._log(config, event.user_id, incident)
+
+    async def _notify_owner(self, config: dict, event, member, incident: dict) -> str:
+        content = event.content or "(Discord no incluyo el texto del mensaje)"
+        preview = discord.utils.escape_mentions(discord.utils.escape_markdown(content))
+        attachment = None
+        if len(preview) > 3500:
+            preview = preview[:3500] + "\n\nTexto completo en el adjunto."
+            attachment = discord.File(io.BytesIO(content.encode("utf-8")), filename="mensaje-bloqueado.txt")
+        channel = event.guild.get_channel_or_thread(event.channel_id) if event.channel_id else None
+        channel_name = discord.utils.escape_markdown(channel.name) if channel else str(event.channel_id or "desconocido")
+        status = {
+            "30 minute timeout (AutoMod)": "Timeout de 30 minutos",
+            "24 hour timeout": "Timeout de 24 horas",
+            "banned": "Ban del Discord",
+        }.get(incident["status"], "AutoMod aplico 30 minutos, pero fallo la escalada. Revisar el log de staff.")
+        embed = discord.Embed(
+            title="Alguien te taggeo. AutoMod bloqueo el mensaje.",
+            description=preview,
+            colour=discord.Colour.orange(),
+            timestamp=datetime.datetime.fromtimestamp(incident["at"], tz=datetime.UTC),
+        )
+        author = discord.utils.escape_mentions(discord.utils.escape_markdown(member.display_name))
+        embed.add_field(name="Quien", value=f"{author} ({member.id})", inline=False)
+        channel_link = f"https://discord.com/channels/{event.guild_id}/{event.channel_id}"
+        embed.add_field(name="Donde", value=f"[#{channel_name}]({channel_link})" if event.channel_id else channel_name)
+        embed.add_field(name="Sancion aplicada", value=status)
+        embed.set_footer(text=f"Aviso {incident['count']} de 3")
+        try:
+            owner = self.bot.get_user(config["owner_id"]) or await self.bot.fetch_user(config["owner_id"])
+            await owner.send(
+                embed=embed, file=attachment,
+                allowed_mentions=discord.AllowedMentions.none(), silent=True,
+            )
+            return "sent"
+        except discord.DiscordException:
+            logger.warning("owner ping: owner DM unavailable; guild=%s", event.guild_id)
+            return "unavailable"
+        finally:
+            if attachment is not None:
+                attachment.close()
 
     async def _log(self, config: dict, user_id: int, incident: dict) -> None:
         logger.warning("owner ping: guild=%s user=%s incident=%s", config["guild_id"], user_id, json.dumps(incident))
@@ -140,7 +183,7 @@ class OwnerPingGuardCog(commands.Cog):
             embed.description = (
                 f"user: {user_id}\nwarning: {incident['count']} out of 3\n"
                 f"channel: {incident['channel_id']}\naction: {incident['status']}\n"
-                f"DM: {incident['dm']}\nwhen: <t:{int(incident['at'])}:f>"
+                f"DM: {incident['dm']}\nowner DM: {incident.get('owner_dm', 'not applicable')}\nwhen: <t:{int(incident['at'])}:f>"
             )
             await channel.send(embed=embed, allowed_mentions=discord.AllowedMentions.none())
         except discord.DiscordException:
