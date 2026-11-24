@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from datetime import datetime, timezone
+from time import monotonic
 from typing import TYPE_CHECKING
 
 import discord
@@ -9,6 +11,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.torii_api import ToriiApiError, ToriiApiUnauthorized
+from bot.score_browser import RecentScoresView
 from bot.utils import (
     clean_user_identifier,
     extract_beatmap_id,
@@ -51,6 +54,8 @@ RANK_SORT_CHOICES = [
 class OsuStatsCog(commands.Cog):
     def __init__(self, bot: ToriiBot) -> None:
         self.bot = bot
+        self._metadata_slots = asyncio.Semaphore(3)
+        self._metadata_cache: OrderedDict[int, tuple[float, dict]] = OrderedDict()
 
     async def _send_error(self, interaction: discord.Interaction, message: str) -> None:
         if interaction.response.is_done():
@@ -59,11 +64,14 @@ class OsuStatsCog(commands.Cog):
             await interaction.response.send_message(message, ephemeral=True)
 
     async def _resolve_user_identifier(self, interaction: discord.Interaction, user: str | None) -> str | int:
+        return await self._resolve_player(interaction.user.id, user)
+
+    async def _resolve_player(self, discord_user_id: int, user: str | None) -> str | int:
         if user:
             cleaned = clean_user_identifier(user)
             if cleaned:
                 return cleaned
-        link = await self.bot.db.get_linked_account(interaction.user.id)
+        link = await self.bot.db.get_linked_account(discord_user_id)
         if link is None:
             raise ValueError("No linked Torii account. Use `/link <username|id>` or pass `user` explicitly.")
         return link.torii_user_id
@@ -251,7 +259,7 @@ class OsuStatsCog(commands.Cog):
 
         unique_ids = list(dict.fromkeys(beatmap_ids))
         results = await asyncio.gather(
-            *(self.bot.api.get_beatmap(beatmap_id) for beatmap_id in unique_ids),
+            *(self._beatmap_metadata(beatmap_id) for beatmap_id in unique_ids),
             return_exceptions=True,
         )
         beatmap_lookup: dict[int, dict] = {}
@@ -272,6 +280,69 @@ class OsuStatsCog(commands.Cog):
                 **beatmap,
                 "beatmapset": fetched.get("beatmapset") or beatmap.get("beatmapset") or {},
             }
+
+    async def _beatmap_metadata(self, beatmap_id: int) -> dict:
+        async with self._metadata_slots:
+            cached = self._metadata_cache.get(beatmap_id)
+            if cached and monotonic() - cached[0] < 300:
+                self._metadata_cache.move_to_end(beatmap_id)
+                return cached[1]
+            data = await self.bot.api.get_beatmap(beatmap_id)
+            self._metadata_cache[beatmap_id] = (monotonic(), data)
+            self._metadata_cache.move_to_end(beatmap_id)
+            while len(self._metadata_cache) > 256:
+                self._metadata_cache.popitem(last=False)
+            return data
+
+    async def _recent_browser(
+        self, owner_id: int, user: str | None, mode: str | None, limit: int, include_fails: bool,
+    ) -> RecentScoresView | None:
+        if mode is not None and mode not in {choice.value for choice in MODE_CHOICES}:
+            raise ValueError("Choose a valid game mode.")
+        identifier = await self._resolve_player(owner_id, user)
+        user_data = await self.bot.api.get_user(identifier, mode=mode)
+        chosen_mode = mode or user_data.get("playmode") or self.bot.settings.default_mode
+        scores = await self.bot.api.get_user_scores(
+            int(user_data["id"]), "recent", mode=chosen_mode, limit=limit, include_fails=include_fails,
+        )
+        if not scores:
+            return None
+        await self._enrich_scores_metadata(scores)
+        return RecentScoresView(owner_id, user_data, scores, chosen_mode, self.bot.settings.torii_web_base_url)
+
+    @commands.hybrid_command(name="rs", description="Browse recent Torii plays.")
+    @commands.cooldown(1, 5, commands.BucketType.user)
+    @app_commands.choices(mode=MODE_CHOICES)
+    @app_commands.describe(
+        user="Torii player/profile name or ID. Defaults to your linked account.",
+        mode="Game mode", include_fails="Include failed plays", limit="Recent plays to load (1-25)",
+    )
+    async def rs(
+        self, ctx: commands.Context, user: str | None = None, mode: str | None = None,
+        include_fails: bool = False, limit: app_commands.Range[int, 1, 25] = 10,
+    ) -> None:
+        await ctx.defer()
+        try:
+            view = await self._recent_browser(ctx.author.id, user, mode, limit, include_fails)
+        except ValueError as exc:
+            await ctx.send(str(exc), allowed_mentions=discord.AllowedMentions.none())
+            return
+        except ToriiApiError:
+            await ctx.send("Torii could not load these plays. Please try again shortly.")
+            return
+        if view is None:
+            await ctx.send("No recent plays found. Try including failed plays or selecting another player profile.")
+            return
+        view.message = await ctx.send(embed=view.embed(), view=view, allowed_mentions=discord.AllowedMentions.none())
+
+    @rs.error
+    async def rs_error(self, ctx: commands.Context, error: commands.CommandError) -> None:
+        if isinstance(error, commands.CommandOnCooldown):
+            await ctx.send(f"Try again in {error.retry_after:.0f}s.")
+        elif isinstance(error, commands.UserInputError):
+            await ctx.send("Use /rs, or t!rs [player] [mode] [include_fails] [limit]. Quote names containing spaces.")
+        else:
+            raise error
 
     @app_commands.command(name="top", description="Show top plays for a user.")
     @app_commands.choices(mode=MODE_CHOICES)
@@ -331,37 +402,18 @@ class OsuStatsCog(commands.Cog):
     ) -> None:
         await interaction.response.defer(thinking=True)
         try:
-            identifier = await self._resolve_user_identifier(interaction, user)
-            user_data = await self.bot.api.get_user(identifier, mode=mode)
-            scores = await self.bot.api.get_user_scores(
-                int(user_data["id"]),
-                "recent",
-                mode=mode,
-                include_fails=include_fails,
-                limit=limit,
-            )
+            view = await self._recent_browser(interaction.user.id, user, mode, limit, include_fails)
         except ValueError as exc:
             await self._send_error(interaction, str(exc))
             return
-        except (ToriiApiUnauthorized, ToriiApiError) as exc:
-            await self._send_error(interaction, str(exc))
+        except ToriiApiError:
+            await self._send_error(interaction, "Torii could not load these plays. Please try again shortly.")
             return
 
-        chosen_mode = mode or user_data.get("playmode") or self.bot.settings.default_mode
-        embed = self._safe_embed(f"Recent Plays - {user_data.get('username')} ({mode_display_name(chosen_mode)})")
-        if not scores:
-            embed.description = "No recent plays in the last 24h."
-        else:
-            await self._enrich_scores_metadata(scores)
-            latest = scores[0]
-            embed.description = self._recent_single_description(latest, user_data)
-            beatmapset = ((latest.get("beatmap") or {}).get("beatmapset") or {})
-            covers = beatmapset.get("covers") or {}
-            cover_url = covers.get("card") or covers.get("list") or covers.get("cover")
-            if cover_url:
-                embed.set_image(url=cover_url)
-            embed.set_footer(text="Showing latest play")
-        await interaction.followup.send(embed=embed)
+        if view is None:
+            await interaction.followup.send("No recent plays found. Try including failed plays or selecting another player profile.")
+            return
+        view.message = await interaction.followup.send(embed=view.embed(), view=view, wait=True, allowed_mentions=discord.AllowedMentions.none())
 
     @app_commands.command(name="score", description="Show one score by id or score URL.")
     @app_commands.describe(score="Score id or Torii score URL")
