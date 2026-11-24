@@ -116,7 +116,6 @@ class RecentScoresView(discord.ui.View):
         if avatar := _image(self.user.get("avatar_url")):
             author["icon_url"] = avatar
         embed.set_author(**author)
-        embed.set_footer(text="ToriiHalo | PP from Torii")
         if self.list_mode:
             embed.title = "Recent plays"
             for i in range(self.list_start, min(self.list_start + 5, len(self.scores))):
