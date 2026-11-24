@@ -190,6 +190,9 @@ class RecentScoresView(discord.ui.View):
         if current_id := score_id(score):
             embed.url = f"{self.web_base}/scores/{current_id}"
         acc = _number(score.get("accuracy"))
+        judgements = score.get("statistics") or {}
+        misses = judgements.get("miss", judgements.get("count_miss"))
+        miss_icon = self.emojis.get("torii_miss", "miss")
         adjusted = adjusted_map_stats(beatmap, score.get("mods"), self.mode)
         attributes = []
         for key, label in (("cs", "CS"), ("ar", "AR"), ("accuracy", "OD"), ("drain", "HP")):
@@ -218,8 +221,7 @@ class RecentScoresView(discord.ui.View):
         embed.description = (
             f"{grade} **+{_text(format_mods(score.get('mods')), 'NM', 200)}**  "
             f"{_value(score.get('total_score', score.get('score')))}  **{format_accuracy(acc) if acc is not None else '--'}**{played_text}\n"
-            f"**{_value(score.get('pp'), 2, 'pp')}** | **{_value(score.get('max_combo'))}x** / {_value(beatmap.get('max_combo'))}x\n"
-            f"{_judgements(score, self.mode).replace('Miss:', self.emojis.get('torii_miss', 'Miss') + ':')}\n"
+            f"**{_value(score.get('pp'), 2, 'pp')}** | **{_value(score.get('max_combo'))}x** / {_value(beatmap.get('max_combo'))}x | {_value(misses)} {miss_icon}\n"
             f"`{' | '.join(attributes)}` | {_value(beatmap.get('difficulty_rating'), 2)}* NM"
         )
         covers = beatmapset.get("covers") or {}

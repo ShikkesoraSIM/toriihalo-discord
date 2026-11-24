@@ -32,6 +32,7 @@ class ToriiBot(commands.Bot):
     def __init__(self, settings: Settings) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
+        intents.emojis_and_stickers = True
         intents.members = True
         # Required to actually RECEIVE MESSAGE_CREATE events in guild
         # channels. intents.guilds covers guild lifecycle events
@@ -101,6 +102,7 @@ class ToriiBot(commands.Bot):
     async def on_ready(self) -> None:
         if self.user:
             logger.info("Bot ready as %s (%s)", self.user, self.user.id)
+            logger.info("Usable Torii emojis: %s", sum(e.name.startswith("torii_") and e.is_usable() for e in self.emojis))
 
     # DEBUG: temporary instrumentation to trace prefix command dispatch
     # for the manual_output cog. Logs every incoming non-bot message
