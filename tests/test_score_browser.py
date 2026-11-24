@@ -70,6 +70,20 @@ def test_access_timeout_and_one_score():
         assert all(item.disabled for item in browser.children if item.style != discord.ButtonStyle.link)
         assert not browser.score_link.disabled
         browser.message.edit.assert_awaited_once()
+        expired = browser.message.edit.call_args.kwargs["embed"]
+        assert not expired.image.url
+        assert expired.thumbnail.url == "https://example.com/cover.jpg"
+        assert browser.children == [browser.score_link]
+        browser.stop()
+    asyncio.run(run())
+
+
+def test_uploaded_emojis_replace_grade_and_miss_text():
+    async def run():
+        browser = view(1)
+        browser.emojis = {"torii_grade_a": "<:torii_grade_a:123>", "torii_miss": "<:torii_miss:456>"}
+        assert "<:torii_grade_a:123>" in browser.embed().description
+        assert "<:torii_miss:456>: **2**" in browser.embed().description
         browser.stop()
     asyncio.run(run())
 
@@ -95,13 +109,14 @@ def test_embed_uses_server_pp_and_base_map_attributes():
     async def run():
         browser = view(1)
         embed = browser.embed()
-        fields = {field.name: field.value for field in embed.fields}
-        assert fields["Performance"] == "**123.45pp**"
-        assert fields["Accuracy"] == "98.76%"
+        assert not embed.fields
+        assert "**123.45pp**" in embed.description
+        assert "98.76%" in embed.description
         assert "DT 1.2x" in embed.description
-        assert "NM" in embed.description and "Map (NM)" in fields
-        assert "300: **300**" in fields["Judgements"]
-        assert "Miss: **2**" in fields["Judgements"]
+        assert "NM:" in embed.description
+        assert "300: **300**" in embed.description
+        assert "Miss: **2**" in embed.description
+        assert len(embed.description.splitlines()) == 4
         assert embed.author.name.startswith("Player_Name")
         assert embed.image.url == "https://example.com/cover.jpg"
         assert len(embed) <= 6000
@@ -114,8 +129,7 @@ def test_ruleset_judgements(mode, label, key):
     async def run():
         browser = view(1, mode)
         browser.scores[0]["statistics"] = {key: 123}
-        values = {f.name: f.value for f in browser.embed().fields}
-        assert f"{label}: **123**" in values["Judgements"]
+        assert f"{label}: **123**" in browser.embed().description
         browser.stop()
     asyncio.run(run())
 
@@ -129,7 +143,7 @@ def test_missing_metadata_and_long_text_fit():
         embed = browser.embed()
         assert len(embed.title) <= 256
         assert not embed.image.url
-        assert embed.fields[0].value == "**--**"
+        assert "**--**" in embed.description
         browser._sync_controls()
         assert browser.score_link.disabled
         await browser.layout.callback(interaction())

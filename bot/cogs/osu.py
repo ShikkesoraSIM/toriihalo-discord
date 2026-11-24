@@ -308,7 +308,8 @@ class OsuStatsCog(commands.Cog):
         if not scores:
             return None
         await self._enrich_scores_metadata(scores)
-        return RecentScoresView(owner_id, user_data, scores, chosen_mode, self.bot.settings.torii_web_base_url)
+        emojis = {emoji.name: str(emoji) for emoji in getattr(self.bot, "emojis", ()) if emoji.name.startswith("torii_") and emoji.is_usable()}
+        return RecentScoresView(owner_id, user_data, scores, chosen_mode, self.bot.settings.torii_web_base_url, emojis=emojis)
 
     @commands.hybrid_command(name="rs", description="Browse recent Torii plays.")
     @commands.cooldown(1, 5, commands.BucketType.user)

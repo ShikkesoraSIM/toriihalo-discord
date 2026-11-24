@@ -69,7 +69,7 @@ def _judgements(score: dict, mode: str) -> str:
 class RecentScoresView(discord.ui.View):
     """Las paginas usan el mismo snapshot; los botones no consultan la API."""
 
-    def __init__(self, owner_id: int, user: dict, scores: list[dict], mode: str, web_base: str, index: int = 0):
+    def __init__(self, owner_id: int, user: dict, scores: list[dict], mode: str, web_base: str, index: int = 0, emojis: dict[str, str] | None = None):
         super().__init__(timeout=180)
         if not scores or not 0 <= index < len(scores):
             raise ValueError("Choose an available recent play.")
@@ -80,9 +80,11 @@ class RecentScoresView(discord.ui.View):
         self.web_base = web_base.rstrip("/")
         self.index = index
         self.list_mode = False
+        self.compact = False
+        self.emojis = emojis or {}
         self.message: discord.WebhookMessage | discord.Message | None = None
         self._navigation_lock = asyncio.Lock()
-        self.score_link = discord.ui.Button(label="Open score", url=self.web_base, row=1)
+        self.score_link = discord.ui.Button(label="Open score", url=self.web_base, row=0)
         self.add_item(self.score_link)
         self._sync_controls()
 
@@ -105,6 +107,7 @@ class RecentScoresView(discord.ui.View):
         beatmap = score.get("beatmap") or {}
         beatmapset = beatmap.get("beatmapset") or score.get("beatmapset") or {}
         rank = str(score.get("rank") or "?").upper()
+        grade = self.emojis.get(f"torii_grade_{rank.lower()}", _text(rank, '?', 5))
         embed = discord.Embed(color=0xEF779D if rank == "F" else 0x55C9C3)
         username = str(self.user.get("username") or "Unknown player").replace("\n", " ")[:80]
         author = {"name": f"{username} | {mode_display_name(self.mode)}"}
@@ -113,7 +116,7 @@ class RecentScoresView(discord.ui.View):
         if avatar := _image(self.user.get("avatar_url")):
             author["icon_url"] = avatar
         embed.set_author(**author)
-        embed.set_footer(text="ToriiHalo | PP from Torii | Recent plays snapshot")
+        embed.set_footer(text="ToriiHalo | PP from Torii")
         if self.list_mode:
             embed.title = "Recent plays"
             for i in range(self.list_start, min(self.list_start + 5, len(self.scores))):
@@ -131,23 +134,30 @@ class RecentScoresView(discord.ui.View):
         embed.title = f"{beatmapset.get('artist') or 'Unknown artist'} - {beatmapset.get('title') or 'Unknown map'} [{beatmap.get('version') or 'Unknown difficulty'}]"[:256]
         if current_id := score_id(score):
             embed.url = f"{self.web_base}/scores/{current_id}"
-        embed.description = f"**{_text(rank, '?', 5)}**  +{_text(format_mods(score.get('mods')), 'NM', 200)}\n{_value(beatmap.get('difficulty_rating'), 2, '*')} NM"
         acc = _number(score.get("accuracy"))
-        embed.add_field(name="Performance", value=f"**{_value(score.get('pp'), 2, 'pp')}**")
-        embed.add_field(name="Accuracy", value=format_accuracy(acc) if acc is not None else "--")
-        embed.add_field(name="Combo", value=f"{_value(score.get('max_combo'))}x / {_value(beatmap.get('max_combo'))}x")
-        embed.add_field(name="Score", value=_value(score.get("total_score", score.get("score"))))
-        embed.add_field(name="Judgements", value=_judgements(score, self.mode), inline=False)
-        embed.add_field(name="Map (NM)", value=f"BPM {_value(beatmap.get('bpm'))} | CS {_value(beatmap.get('cs'), 1)} | AR {_value(beatmap.get('ar'), 1)} | OD {_value(beatmap.get('accuracy'), 1)} | HP {_value(beatmap.get('drain'), 1)}", inline=False)
+        played_text = ""
         try:
             played = datetime.fromisoformat(str(score.get("ended_at") or score.get("created_at")).replace("Z", "+00:00"))
             if played.tzinfo is not None:
-                embed.add_field(name="Played", value=discord.utils.format_dt(played, "R"))
+                played_text = " | " + discord.utils.format_dt(played, "R")
         except ValueError:
             pass
+        embed.description = (
+            f"{grade} **+{_text(format_mods(score.get('mods')), 'NM', 200)}**  "
+            f"{_value(score.get('total_score', score.get('score')))}  **{format_accuracy(acc) if acc is not None else '--'}**{played_text}\n"
+            f"**{_value(score.get('pp'), 2, 'pp')}** | **{_value(score.get('max_combo'))}x** / {_value(beatmap.get('max_combo'))}x\n"
+            f"{_judgements(score, self.mode).replace('Miss:', self.emojis.get('torii_miss', 'Miss') + ':')}\n"
+            f"`NM: {_value(beatmap.get('difficulty_rating'), 2)}* | CS {_value(beatmap.get('cs'), 1)} "
+            f"AR {_value(beatmap.get('ar'), 1)} OD {_value(beatmap.get('accuracy'), 1)} "
+            f"HP {_value(beatmap.get('drain'), 1)} | BPM {_value(beatmap.get('bpm'))}`"
+        )
         covers = beatmapset.get("covers") or {}
-        if cover := next((url for key in ("card", "cover", "list") if (url := _image(covers.get(key)))), None):
-            embed.set_image(url=cover)
+        keys = ("list", "card", "cover") if self.compact else ("cover", "card", "list")
+        if cover := next((url for key in keys if (url := _image(covers.get(key)))), None):
+            if self.compact:
+                embed.set_thumbnail(url=cover)
+            else:
+                embed.set_image(url=cover)
         return embed
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -158,12 +168,14 @@ class RecentScoresView(discord.ui.View):
 
     async def on_timeout(self) -> None:
         async with self._navigation_lock:
-            for child in self.children:
+            self.compact = True
+            for child in list(self.children):
                 if not isinstance(child, discord.ui.Button) or child.style != discord.ButtonStyle.link:
                     child.disabled = True
+                    self.remove_item(child)
             if self.message:
                 try:
-                    await self.message.edit(view=self)
+                    await self.message.edit(embed=self.embed(), view=self)
                 except discord.HTTPException:
                     pass
 
