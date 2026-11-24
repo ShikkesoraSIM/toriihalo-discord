@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import re
 from datetime import datetime
 from urllib.parse import urlsplit
 
@@ -42,6 +43,59 @@ def _image(value: object) -> str | None:
 def score_id(score: dict) -> int | None:
     value = score.get("id")
     return value if type(value) is int and value > 0 else None
+
+
+def _mods(value: object) -> list[tuple[str, dict]]:
+    if isinstance(value, str):
+        return [(name, {}) for name in re.findall(r"[A-Z]{2}", value.upper())]
+    if not isinstance(value, list):
+        return []
+    return [(str(mod.get("acronym", "")).upper(), mod.get("settings") or {})
+            if isinstance(mod, dict) else (str(mod).upper(), {}) for mod in value]
+
+
+def adjusted_map_stats(beatmap: dict, mods: object, mode: str) -> dict:
+    stats = {key: _number(beatmap.get(key)) for key in ("cs", "ar", "accuracy", "drain", "bpm", "total_length")}
+    selected = dict(_mods(mods))
+    rate = 1.0
+    # NC/DT y DC/HT pueden venir juntos en scores legacy: no duplicar el rate.
+    for names, default in ((("NC", "DT"), 1.5), (("DC", "HT"), 0.75)):
+        for name in names:
+            if name in selected:
+                candidate = _number(selected[name].get("speed_change", default))
+                rate *= candidate if candidate is not None and candidate > 0 else default
+                break
+    if "EZ" in selected:
+        for key in ("cs", "ar", "accuracy", "drain"):
+            if stats[key] is not None and not (mode == "mania" and key == "cs"):
+                stats[key] *= 0.5
+    if "HR" in selected:
+        for key, multiplier in (("cs", 1.3), ("ar", 1.4), ("accuracy", 1.4), ("drain", 1.4)):
+            if stats[key] is not None and not (mode == "mania" and key == "cs"):
+                stats[key] = min(10.0, stats[key] * multiplier)
+    da = selected.get("DA", {})
+    for key, setting in (("cs", "circle_size"), ("ar", "approach_rate"), ("accuracy", "overall_difficulty"), ("drain", "drain_rate")):
+        if (override := _number(da.get(setting))) is not None:
+            stats[key] = override
+    variable_rate = bool({"WU", "WD", "AS"} & selected.keys())
+    if variable_rate:
+        stats.update(bpm=None, total_length=None, ar=None, accuracy=None)
+    else:
+        if stats["bpm"] is not None:
+            stats["bpm"] *= rate
+        if stats["total_length"] is not None:
+            stats["total_length"] /= rate
+        if mode.startswith(("osu", "fruits")) and stats["ar"] is not None and rate != 1:
+            ar = stats["ar"]
+            preempt = (1800 - 120 * ar if ar <= 5 else 1200 - 150 * (ar - 5)) / rate
+            stats["ar"] = (1800 - preempt) / 120 if preempt >= 1200 else 5 + (1200 - preempt) / 150
+        if mode.startswith("osu") and stats["accuracy"] is not None and rate != 1:
+            stats["accuracy"] = (80 - (80 - 6 * stats["accuracy"]) / rate) / 6
+        elif mode.startswith("taiko") and stats["accuracy"] is not None and rate != 1:
+            stats["accuracy"] = (50 - (50 - 3 * stats["accuracy"]) / rate) / 3
+    stats["rate"] = rate
+    stats["variable_rate"] = variable_rate
+    return stats
 
 
 def _judgements(score: dict, mode: str) -> str:
@@ -127,13 +181,33 @@ class RecentScoresView(discord.ui.View):
                 link = f"{self.web_base}/scores/{score_id(item)}" if score_id(item) else self.web_base
                 acc = _number(item.get("accuracy"))
                 summary = f"**{_value(item.get('pp'), 2, 'pp')}** | {format_accuracy(acc) if acc is not None else '--'} | {_text(format_mods(item.get('mods')), 'NM', 140)}"
-                embed.add_field(name=f"{i + 1}. {_text(item.get('rank'), '?', 5)}", value=f"[{title} [{difficulty}]]({link})\n{summary}", inline=False)
+                item_rank = str(item.get("rank") or "?").upper()
+                item_grade = self.emojis.get(f"torii_grade_{item_rank.lower()}", _text(item_rank, '?', 5))
+                embed.add_field(name=f"#{i + 1}", value=f"{item_grade} [{title} [{difficulty}]]({link})\n{summary}", inline=False)
             return embed
 
         embed.title = f"{beatmapset.get('artist') or 'Unknown artist'} - {beatmapset.get('title') or 'Unknown map'} [{beatmap.get('version') or 'Unknown difficulty'}]"[:256]
         if current_id := score_id(score):
             embed.url = f"{self.web_base}/scores/{current_id}"
         acc = _number(score.get("accuracy"))
+        adjusted = adjusted_map_stats(beatmap, score.get("mods"), self.mode)
+        attributes = []
+        for key, label in (("cs", "CS"), ("ar", "AR"), ("accuracy", "OD"), ("drain", "HP")):
+            if self.mode.startswith("taiko") and key in ("cs", "ar"):
+                continue
+            if self.mode == "mania" and key == "ar":
+                continue
+            if self.mode.startswith("fruits") and key == "accuracy":
+                continue
+            if self.mode == "mania" and key == "accuracy":
+                label = "OD (set)"
+            if self.mode == "mania" and key == "cs":
+                label = "Keys"
+            attributes.append(f"{label} {_value(adjusted[key], 1)}")
+        duration = adjusted["total_length"]
+        length = f"{int(duration) // 60}:{int(duration) % 60:02}" if duration is not None and duration >= 0 else "--:--"
+        attributes.append(f"BPM {_value(adjusted['bpm'], 1)}")
+        attributes.append(length)
         played_text = ""
         try:
             played = datetime.fromisoformat(str(score.get("ended_at") or score.get("created_at")).replace("Z", "+00:00"))
@@ -146,9 +220,7 @@ class RecentScoresView(discord.ui.View):
             f"{_value(score.get('total_score', score.get('score')))}  **{format_accuracy(acc) if acc is not None else '--'}**{played_text}\n"
             f"**{_value(score.get('pp'), 2, 'pp')}** | **{_value(score.get('max_combo'))}x** / {_value(beatmap.get('max_combo'))}x\n"
             f"{_judgements(score, self.mode).replace('Miss:', self.emojis.get('torii_miss', 'Miss') + ':')}\n"
-            f"`NM: {_value(beatmap.get('difficulty_rating'), 2)}* | CS {_value(beatmap.get('cs'), 1)} "
-            f"AR {_value(beatmap.get('ar'), 1)} OD {_value(beatmap.get('accuracy'), 1)} "
-            f"HP {_value(beatmap.get('drain'), 1)} | BPM {_value(beatmap.get('bpm'))}`"
+            f"`{' | '.join(attributes)}` | {_value(beatmap.get('difficulty_rating'), 2)}* NM"
         )
         covers = beatmapset.get("covers") or {}
         keys = ("list", "card", "cover") if self.compact else ("cover", "card", "list")

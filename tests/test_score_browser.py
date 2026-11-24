@@ -6,7 +6,7 @@ import discord
 import pytest
 
 from bot.cogs.osu import OsuStatsCog
-from bot.score_browser import RecentScoresView
+from bot.score_browser import RecentScoresView, adjusted_map_stats
 from bot.torii_api import ToriiApiError
 
 
@@ -113,13 +113,57 @@ def test_embed_uses_server_pp_and_base_map_attributes():
         assert "**123.45pp**" in embed.description
         assert "98.76%" in embed.description
         assert "DT 1.2x" in embed.description
-        assert "NM:" in embed.description
+        assert "* NM" in embed.description
         assert "300: **300**" in embed.description
         assert "Miss: **2**" in embed.description
         assert len(embed.description.splitlines()) == 4
         assert embed.author.name.startswith("Player_Name")
         assert embed.image.url == "https://example.com/cover.jpg"
         assert len(embed) <= 6000
+        browser.stop()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("mods,rate", [
+    ([dict(acronym="DT", settings=dict(speed_change=1.85))], 1.85),
+    ([dict(acronym="DT")], 1.5), ([dict(acronym="HT")], 0.75),
+    ([dict(acronym="NC"), dict(acronym="DT")], 1.5),
+    ("DT", 1.5), ([], 1),
+])
+def test_rate_adjusted_attributes(mods, rate):
+    bm = dict(bpm=211, cs=4, ar=9, accuracy=8, drain=6, total_length=185)
+    result = adjusted_map_stats(bm, mods, "osu")
+    assert result["bpm"] == pytest.approx(211 * rate)
+    assert result["total_length"] == pytest.approx(185 / rate)
+    assert result["cs"] == 4 and result["drain"] == 6
+    assert result["ar"] == pytest.approx(13 - 4 / rate)
+    assert result["accuracy"] == pytest.approx((80 - 32 / rate) / 6)
+    assert bm["bpm"] == 211
+
+
+def test_hr_ez_da_and_missing_stats():
+    bm = dict(cs=6, ar=9, accuracy=8, drain=8, bpm=200)
+    hr = adjusted_map_stats(bm, [dict(acronym="HR")], "osu")
+    assert hr["cs"] == pytest.approx(7.8)
+    assert hr["ar"] == hr["accuracy"] == hr["drain"] == 10
+    ez = adjusted_map_stats(bm, [dict(acronym="EZ")], "osu")
+    assert ez["cs"] == 3 and ez["ar"] == 4.5
+    da = adjusted_map_stats(bm, [dict(acronym="DA", settings=dict(circle_size=9, approach_rate=10)), dict(acronym="DT", settings=dict(speed_change=1.85))], "osu")
+    assert da["cs"] == 9
+    assert da["ar"] == pytest.approx(13 - 3 / 1.85)
+    assert adjusted_map_stats({}, [], "osu")["bpm"] is None
+    assert adjusted_map_stats(bm, [dict(acronym="WU")], "osu")["bpm"] is None
+
+
+def test_emojis_in_list_and_modded_stats_in_detail():
+    async def run():
+        browser = view(1)
+        browser.emojis = {"torii_grade_a": "<:torii_grade_a:123>", "torii_miss": "<:torii_miss:456>"}
+        browser.scores[0]["beatmap"]["bpm"] = 211
+        browser.scores[0]["mods"] = [dict(acronym="DT", settings=dict(speed_change=1.85))]
+        assert "BPM 390.4" in browser.embed().description
+        browser.list_mode = True
+        assert "<:torii_grade_a:123>" in browser.embed().fields[0].value
         browser.stop()
     asyncio.run(run())
 
