@@ -82,7 +82,7 @@ class RecentScoresView(discord.ui.View):
         self.list_mode = False
         self.message: discord.WebhookMessage | discord.Message | None = None
         self._navigation_lock = asyncio.Lock()
-        self.score_link = discord.ui.Button(label="Open score", style=discord.ButtonStyle.link, row=1)
+        self.score_link = discord.ui.Button(label="Open score", url=self.web_base, row=1)
         self.add_item(self.score_link)
         self._sync_controls()
 

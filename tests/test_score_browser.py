@@ -74,6 +74,23 @@ def test_access_timeout_and_one_score():
     asyncio.run(run())
 
 
+def test_link_payload_never_contains_custom_id():
+    async def run():
+        browser = view()
+        for action in (None, "next", "layout", "layout", "previous"):
+            if action:
+                await browser._navigate(interaction(), action)
+            for row in browser.to_components():
+                for component in row["components"]:
+                    if component["style"] == discord.ButtonStyle.link.value:
+                        assert component["url"].startswith("https://")
+                        assert "custom_id" not in component
+                    else:
+                        assert "url" not in component
+        browser.stop()
+    asyncio.run(run())
+
+
 def test_embed_uses_server_pp_and_base_map_attributes():
     async def run():
         browser = view(1)
