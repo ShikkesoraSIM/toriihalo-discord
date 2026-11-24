@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import json
 import time
 from urllib.parse import quote
 
@@ -204,6 +205,13 @@ class ToriiApiClient:
         if isinstance(data, dict):
             return data
         raise ToriiApiError(f"Unexpected response for beatmap: {type(data)}")
+
+    async def get_beatmap_attributes(self, beatmap_id: int, mods: list[dict], mode: str) -> dict:
+        params = [("ruleset", mode)] + [("mods", json.dumps(mod, sort_keys=True)) for mod in mods]
+        data = await self._request("POST", f"/api/v2/beatmaps/{beatmap_id}/attributes", params=params)
+        if not isinstance(data, dict):
+            raise ToriiApiError("Unexpected response for beatmap attributes")
+        return data
 
     async def get_beatmap_scores(
         self,

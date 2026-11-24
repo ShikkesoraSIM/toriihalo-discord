@@ -13,7 +13,15 @@ optional for future development, not required to use /rs on ToriiHalo.
 - Only the command author can navigate. Controls expire after three minutes.
 - PP is the value returned by Torii, not a local recalculation.
 - Mod settings include rate changes and Difficulty Adjust values.
-- Stars, BPM and CS/AR/OD/HP are explicitly marked NM/base values.
+- Stars in the title come from Torii's difficulty endpoint with the full mod
+  settings and ruleset, cached five minutes per map/mode/settings. Missing
+  calculations show SR unavailable, never silently use NM stars.
+- BPM/duration and standard effective AR/OD reflect rate; HR/EZ/DA are applied.
+  Mania OD is explicitly the configured OD, not a standard timing conversion.
+- Visible mode names use Torii branding. Internal API ruleset IDs are unchanged.
+- Maximum PP and FC estimates are not implemented: the existing public API
+  exposes difficulty but not performance simulation. They need a read-only
+  server endpoint using the Torii PP pipeline, not guessed ratios or upstream PP.
 - Missing PP or judgements display `--`, not a made-up zero.
 - Score navigation uses one fetched snapshot, with no API calls per click.
 - Missing map metadata has a five-minute, 256-entry cache and a concurrency cap

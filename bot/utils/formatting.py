@@ -4,14 +4,14 @@ from typing import Any
 
 
 MODE_DISPLAY = {
-    "osu": "osu!",
-    "taiko": "osu!taiko",
-    "fruits": "osu!catch",
-    "mania": "osu!mania",
-    "osurx": "osu!relax",
-    "osuap": "osu!autopilot",
-    "taikorx": "taiko relax",
-    "fruitsrx": "catch relax",
+    "osu": "Torii",
+    "taiko": "Torii Drums",
+    "fruits": "Torii Fruits",
+    "mania": "Torii Keys",
+    "osurx": "Torii Relax",
+    "osuap": "Torii Autopilot",
+    "taikorx": "Torii Drums Relax",
+    "fruitsrx": "Torii Fruits Relax",
 }
 
 

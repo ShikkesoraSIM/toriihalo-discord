@@ -45,7 +45,7 @@ def score_id(score: dict) -> int | None:
     return value if type(value) is int and value > 0 else None
 
 
-def _mods(value: object) -> list[tuple[str, dict]]:
+def score_mods(value: object) -> list[tuple[str, dict]]:
     if isinstance(value, str):
         return [(name, {}) for name in re.findall(r"[A-Z]{2}", value.upper())]
     if not isinstance(value, list):
@@ -56,7 +56,7 @@ def _mods(value: object) -> list[tuple[str, dict]]:
 
 def adjusted_map_stats(beatmap: dict, mods: object, mode: str) -> dict:
     stats = {key: _number(beatmap.get(key)) for key in ("cs", "ar", "accuracy", "drain", "bpm", "total_length")}
-    selected = dict(_mods(mods))
+    selected = dict(score_mods(mods))
     rate = 1.0
     # NC/DT y DC/HT pueden venir juntos en scores legacy: no duplicar el rate.
     for names, default in ((("NC", "DT"), 1.5), (("DC", "HT"), 0.75)):
@@ -186,7 +186,11 @@ class RecentScoresView(discord.ui.View):
                 embed.add_field(name=f"#{i + 1}", value=f"{item_grade} [{title} [{difficulty}]]({link})\n{summary}", inline=False)
             return embed
 
-        embed.title = f"{beatmapset.get('artist') or 'Unknown artist'} - {beatmapset.get('title') or 'Unknown map'} [{beatmap.get('version') or 'Unknown difficulty'}]"[:256]
+        attributes = score.get("_torii_difficulty") or {}
+        stars = _number(attributes.get("star_rating"))
+        star_label = f" [{stars:.2f}\N{BLACK STAR}]" if stars is not None and stars >= 0 else " [SR unavailable]"
+        title = f"{beatmapset.get('artist') or 'Unknown artist'} - {beatmapset.get('title') or 'Unknown map'} [{beatmap.get('version') or 'Unknown difficulty'}]"
+        embed.title = title[:256 - len(star_label)] + star_label
         if current_id := score_id(score):
             embed.url = f"{self.web_base}/scores/{current_id}"
         acc = _number(score.get("accuracy"))
@@ -222,7 +226,7 @@ class RecentScoresView(discord.ui.View):
             f"{grade} **+{_text(format_mods(score.get('mods')), 'NM', 200)}**  "
             f"{_value(score.get('total_score', score.get('score')))}  **{format_accuracy(acc) if acc is not None else '--'}**{played_text}\n"
             f"**{_value(score.get('pp'), 2, 'pp')}** | **{_value(score.get('max_combo'))}x** / {_value(beatmap.get('max_combo'))}x | {_value(misses)} {miss_icon}\n"
-            f"`{' | '.join(attributes)}` | {_value(beatmap.get('difficulty_rating'), 2)}* NM"
+            f"`{' | '.join(attributes)}`"
         )
         covers = beatmapset.get("covers") or {}
         keys = ("list", "card", "cover") if self.compact else ("cover", "card", "list")

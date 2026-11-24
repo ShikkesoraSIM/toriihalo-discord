@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import math
 from collections import OrderedDict
 from datetime import datetime, timezone
 from time import monotonic
@@ -11,7 +13,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.torii_api import ToriiApiError, ToriiApiUnauthorized
-from bot.score_browser import RecentScoresView
+from bot.score_browser import RecentScoresView, score_mods
 from bot.utils import (
     clean_user_identifier,
     extract_beatmap_id,
@@ -29,14 +31,14 @@ if TYPE_CHECKING:
 
 
 MODE_CHOICES = [
-    app_commands.Choice(name="osu!", value="osu"),
-    app_commands.Choice(name="taiko", value="taiko"),
-    app_commands.Choice(name="fruits", value="fruits"),
-    app_commands.Choice(name="mania", value="mania"),
-    app_commands.Choice(name="osu!rx", value="osurx"),
-    app_commands.Choice(name="osu!ap", value="osuap"),
-    app_commands.Choice(name="taiko rx", value="taikorx"),
-    app_commands.Choice(name="fruits rx", value="fruitsrx"),
+    app_commands.Choice(name="Torii", value="osu"),
+    app_commands.Choice(name="Torii Drums", value="taiko"),
+    app_commands.Choice(name="Torii Fruits", value="fruits"),
+    app_commands.Choice(name="Torii Keys", value="mania"),
+    app_commands.Choice(name="Torii Relax", value="osurx"),
+    app_commands.Choice(name="Torii Autopilot", value="osuap"),
+    app_commands.Choice(name="Torii Drums Relax", value="taikorx"),
+    app_commands.Choice(name="Torii Fruits Relax", value="fruitsrx"),
 ]
 
 LEADERBOARD_TYPE_CHOICES = [
@@ -56,6 +58,35 @@ class OsuStatsCog(commands.Cog):
         self.bot = bot
         self._metadata_slots = asyncio.Semaphore(3)
         self._metadata_cache: OrderedDict[int, tuple[float, dict]] = OrderedDict()
+        self._difficulty_cache: OrderedDict[tuple, tuple[float, dict]] = OrderedDict()
+        self._difficulty_slots = asyncio.Semaphore(2)
+
+    async def _enrich_difficulty(self, scores: list[dict], mode: str) -> None:
+        async def enrich(score):
+            beatmap_id = (score.get("beatmap") or {}).get("id")
+            if type(beatmap_id) is not int or beatmap_id <= 0:
+                return
+            mods = [dict(acronym=name, settings=settings) for name, settings in score_mods(score.get("mods")) if name != "NM"]
+            mods.sort(key=lambda mod: mod["acronym"])
+            key = (beatmap_id, mode, json.dumps(mods, sort_keys=True))
+            async with self._difficulty_slots:
+                cached = self._difficulty_cache.get(key)
+                if cached and monotonic() - cached[0] < 300:
+                    self._difficulty_cache.move_to_end(key)
+                    score["_torii_difficulty"] = cached[1]
+                    return
+                try:
+                    data = await self.bot.api.get_beatmap_attributes(beatmap_id, mods, mode)
+                    stars = data.get("star_rating")
+                    if type(stars) not in (int, float) or not math.isfinite(stars) or stars < 0:
+                        return
+                except ToriiApiError:
+                    return
+                self._difficulty_cache[key] = (monotonic(), data)
+                while len(self._difficulty_cache) > 256:
+                    self._difficulty_cache.popitem(last=False)
+                score["_torii_difficulty"] = data
+        await asyncio.gather(*(enrich(score) for score in scores))
 
     async def _send_error(self, interaction: discord.Interaction, message: str) -> None:
         if interaction.response.is_done():
@@ -308,6 +339,7 @@ class OsuStatsCog(commands.Cog):
         if not scores:
             return None
         await self._enrich_scores_metadata(scores)
+        await self._enrich_difficulty(scores, chosen_mode)
         emojis = {emoji.name: str(emoji) for emoji in getattr(self.bot, "emojis", ()) if emoji.name.startswith("torii_") and emoji.is_usable()}
         return RecentScoresView(owner_id, user_data, scores, chosen_mode, self.bot.settings.torii_web_base_url, emojis=emojis)
 

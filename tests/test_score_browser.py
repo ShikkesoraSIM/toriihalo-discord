@@ -113,7 +113,8 @@ def test_embed_uses_server_pp_and_base_map_attributes():
         assert "**123.45pp**" in embed.description
         assert "98.76%" in embed.description
         assert "DT 1.2x" in embed.description
-        assert "* NM" in embed.description
+        assert "NM" not in embed.description.splitlines()[-1]
+        assert "SR unavailable" in embed.title
         assert "300:" not in embed.description
         assert "2 miss" in embed.description.splitlines()[1]
         assert len(embed.description.splitlines()) == 3
@@ -198,7 +199,7 @@ def test_missing_metadata_and_long_text_fit():
 
 def fake_bot():
     return SimpleNamespace(api=SimpleNamespace(get_beatmap=AsyncMock(), get_user=AsyncMock(return_value=dict(id=10, username="Player", playmode="osu")),
-                                               get_user_scores=AsyncMock()),
+                                               get_user_scores=AsyncMock(), get_beatmap_attributes=AsyncMock(return_value=dict(star_rating=6.4))),
                            db=SimpleNamespace(get_linked_account=AsyncMock(return_value=SimpleNamespace(torii_user_id=10))),
                            settings=SimpleNamespace(default_mode="osu", torii_web_base_url="https://lazer.shikkesora.com"))
 
@@ -212,12 +213,48 @@ def test_recent_loading_respects_link_mode_and_fail_filter():
         bot.db.get_linked_account.assert_awaited_once_with(7)
         bot.api.get_user_scores.assert_awaited_once_with(10, "recent", mode="mania", limit=10, include_fails=True)
         assert browser.mode == "mania"
+        assert "[6.40\N{BLACK STAR}]" in browser.embed().title
         bot.api.get_beatmap.assert_not_awaited()
         browser.stop()
         bot.api.get_user_scores.return_value = []
         assert await cog._recent_browser(7, "Other", None, 10, False) is None
         with pytest.raises(ValueError):
             await cog._recent_browser(7, None, "made_up", 10, False)
+    asyncio.run(run())
+
+
+def test_difficulty_cache_includes_mod_settings_and_mode():
+    async def run():
+        bot = fake_bot()
+        cog = OsuStatsCog(bot)
+        first = score()
+        await cog._enrich_difficulty([first], "osu")
+        bot.api.get_beatmap_attributes.assert_awaited_once_with(50, first["mods"], "osu")
+        await cog._enrich_difficulty([score()], "osu")
+        assert bot.api.get_beatmap_attributes.await_count == 1
+        faster = score()
+        faster["mods"][0]["settings"]["speed_change"] = 1.85
+        await cog._enrich_difficulty([faster], "osu")
+        await cog._enrich_difficulty([score()], "osurx")
+        assert bot.api.get_beatmap_attributes.await_count == 3
+        bot.api.get_beatmap_attributes.side_effect = ToriiApiError("unavailable")
+        missing = score()
+        missing["beatmap"]["id"] = 99
+        await cog._enrich_difficulty([missing], "osu")
+        assert "_torii_difficulty" not in missing
+    asyncio.run(run())
+
+
+def test_post_mod_stars_only_in_title_and_long_title_keeps_them():
+    async def run():
+        browser = view(1)
+        browser.scores[0]["_torii_difficulty"] = dict(star_rating=8.65)
+        browser.scores[0]["beatmap"]["beatmapset"]["title"] = "x" * 500
+        embed = browser.embed()
+        assert embed.title.endswith("[8.65\N{BLACK STAR}]")
+        assert len(embed.title) <= 256
+        assert "8.65" not in embed.description
+        browser.stop()
     asyncio.run(run())
 
 

@@ -1,9 +1,13 @@
-from bot.utils.formatting import accuracy_to_percent, format_accuracy, format_mods, format_pp
+from bot.utils.formatting import accuracy_to_percent, format_accuracy, format_mods, format_pp, MODE_DISPLAY
 
 
 def test_accuracy_normalization() -> None:
     assert round(accuracy_to_percent(0.9876), 2) == 98.76
     assert round(accuracy_to_percent(98.76), 2) == 98.76
+
+
+def test_all_mode_names_use_torii_branding():
+    assert all(name.startswith("Torii") and "osu!" not in name for name in MODE_DISPLAY.values())
 
 
 def test_format_accuracy() -> None:
